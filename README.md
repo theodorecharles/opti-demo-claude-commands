@@ -8,23 +8,37 @@ Claude Code slash commands for building Optimizely demo apps.
 bash <(curl -fsSL https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/install.sh)
 ```
 
-This installs two commands into `~/.claude/commands/`:
+The installer will:
+- Download all commands to `~/.claude/commands/`
+- Configure permissions so commands run without prompts
+- Optionally set up your Optimizely API token
 
-- **`/fx-demo`** — Build a Feature Experimentation demo (iOS SwiftUI or Web React/Next.js)
-- **`/wx-demo`** — Build a Web Experimentation demo site
+## Commands
 
-On first run, you'll be prompted for your Optimizely API token (stored locally at `~/.optimizely/api_token`).
-
-## Update
-
-Re-run the same install command to pull the latest versions.
+| Command | Description |
+|---------|-------------|
+| `/fx-demo` | Build a Feature Experimentation demo (iOS SwiftUI or Web React/Next.js) |
+| `/wx-demo` | Build a Web Experimentation demo site |
+| `/update-demo-commands` | Update all commands to the latest version |
+| `/uninstall-demo-commands` | Remove commands, API token, and permissions |
 
 ## API Token
 
-Your token is stored at `~/.optimizely/api_token` and never committed to this repo. To reset it:
+Your token is stored locally at `~/.optimizely/api_token` and is never committed to this repo. If you didn't enter it during install, you'll be prompted on first run of `/fx-demo` or `/wx-demo`.
+
+To reset your token:
 
 ```bash
 rm ~/.optimizely/api_token
 ```
 
 You'll be prompted again on next use.
+
+## Uninstall
+
+Run `/uninstall-demo-commands` in Claude Code, or manually:
+
+```bash
+rm ~/.claude/commands/fx-demo.md ~/.claude/commands/wx-demo.md ~/.claude/commands/update-demo-commands.md ~/.claude/commands/uninstall-demo-commands.md
+rm -rf ~/.optimizely
+```
