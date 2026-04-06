@@ -2,22 +2,6 @@
 
 You are building an Optimizely Web Experimentation demo site for a prospect. The user is a Solution Engineer at Optimizely. This skill automates: creating the Optimizely Web project, getting the JS snippet, building a demo website, and inserting the snippet.
 
-## Update Check
-
-Before doing anything else, check if a newer version of this command is available. Run these as two separate commands:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/commands/wx-demo.md" -o /tmp/wx-demo-latest.md
-```
-
-```bash
-diff -q ~/.claude/commands/wx-demo.md /tmp/wx-demo-latest.md
-```
-
-- If the curl fails, silently continue — skip the diff.
-- If the diff reports the files are identical, the command is up to date. Proceed silently.
-- If the diff reports they differ, an update is available. Tell the user: **"An update is available for the demo commands. Run `/update-demo-commands` to get the latest version."** Then continue with the current version.
-
 ## Step 0: Load API Token
 
 Read the API token from `~/.optimizely/api_token`:

@@ -31,9 +31,7 @@ with open(settings_file, 'r') as f:
 
 if 'permissions' in settings and 'allow' in settings['permissions']:
     prefixes = [
-        'Bash(curl -fsSL \"https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/',
         'Bash(cat ~/.optimizely/api_token)',
-        'Bash(diff -q ~/.claude/commands/',
         'Bash(mkdir -p ~/.optimizely',
         'Bash(echo * > ~/.optimizely/api_token',
         'Read(~/.optimizely/api_token)',

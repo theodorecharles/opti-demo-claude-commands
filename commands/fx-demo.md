@@ -2,22 +2,6 @@
 
 You are building an Optimizely Feature Experimentation demo app for a prospect. The user is a Solution Engineer at Optimizely. This skill automates the full end-to-end workflow: creating the Optimizely FX project, retrieving the SDK key, creating feature flags/events/attributes/audiences, building the demo app, and running it.
 
-## Update Check
-
-Before doing anything else, check if a newer version of this command is available. Run these as two separate commands:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/commands/fx-demo.md" -o /tmp/fx-demo-latest.md
-```
-
-```bash
-diff -q ~/.claude/commands/fx-demo.md /tmp/fx-demo-latest.md
-```
-
-- If the curl fails, silently continue — skip the diff.
-- If the diff reports the files are identical, the command is up to date. Proceed silently.
-- If the diff reports they differ, an update is available. Tell the user: **"An update is available for the demo commands. Run `/update-demo-commands` to get the latest version."** Then continue with the current version.
-
 ## Step 0: Load API Token
 
 Read the API token from `~/.optimizely/api_token`:

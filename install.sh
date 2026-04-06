@@ -26,10 +26,8 @@ echo "==> Commands installed to $DEST_DIR"
 # Add permission rules to Claude settings so commands run without prompts
 SETTINGS_FILE="$HOME/.claude/settings.json"
 RULES=(
-  'Bash(curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/*)'
   'Bash(cat ~/.optimizely/api_token)'
   'Read(~/.optimizely/api_token)'
-  'Bash(diff -q ~/.claude/commands/* /tmp/*)'
   'Bash(mkdir -p ~/.optimizely*)'
   'Bash(echo * > ~/.optimizely/api_token*)'
   'Write(~/.optimizely/api_token)'
