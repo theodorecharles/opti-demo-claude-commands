@@ -29,7 +29,7 @@ RULES=(
   'Bash(curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/*)'
   'Bash(cat ~/.optimizely/api_token)'
   'Read(~/.optimizely/api_token)'
-  'Bash(diff -q ~/.claude/commands/*)'
+  'Bash(diff -q ~/.claude/commands/* /tmp/*)'
   'Bash(mkdir -p ~/.optimizely*)'
   'Bash(echo * > ~/.optimizely/api_token*)'
   'Write(~/.optimizely/api_token)'

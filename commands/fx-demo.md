@@ -4,15 +4,19 @@ You are building an Optimizely Feature Experimentation demo app for a prospect. 
 
 ## Update Check
 
-Before doing anything else, check if a newer version of this command is available. Download the remote version to a temp file and compare it to the local copy:
+Before doing anything else, check if a newer version of this command is available. Run these as two separate commands:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/commands/fx-demo.md" -o /tmp/fx-demo-latest.md 2>/dev/null && diff -q ~/.claude/commands/fx-demo.md /tmp/fx-demo-latest.md > /dev/null 2>&1; echo $?
+curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/commands/fx-demo.md" -o /tmp/fx-demo-latest.md
 ```
 
-- If the diff exits with `0`, the command is up to date. Proceed silently.
-- If the diff exits with `1`, an update is available. Tell the user: **"An update is available for the demo commands. Run `/update-demo-commands` to get the latest version."** Then continue with the current version.
-- If the curl fails, silently continue.
+```bash
+diff -q ~/.claude/commands/fx-demo.md /tmp/fx-demo-latest.md
+```
+
+- If the curl fails, silently continue — skip the diff.
+- If the diff reports the files are identical, the command is up to date. Proceed silently.
+- If the diff reports they differ, an update is available. Tell the user: **"An update is available for the demo commands. Run `/update-demo-commands` to get the latest version."** Then continue with the current version.
 
 ## Step 0: Load API Token
 
