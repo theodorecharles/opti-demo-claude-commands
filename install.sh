@@ -18,6 +18,8 @@ echo "    Downloading wx-demo.md..."
 curl -fsSL "$REPO_URL/wx-demo.md" -o "$DEST_DIR/wx-demo.md"
 echo "    Downloading update-demo-commands.md..."
 curl -fsSL "$REPO_URL/update-demo-commands.md" -o "$DEST_DIR/update-demo-commands.md"
+echo "    Downloading uninstall-demo-commands.md..."
+curl -fsSL "$REPO_URL/uninstall-demo-commands.md" -o "$DEST_DIR/uninstall-demo-commands.md"
 
 echo "==> Commands installed to $DEST_DIR"
 
@@ -100,8 +102,9 @@ fi
 
 echo ""
 echo "Done! Available commands:"
-echo "  /fx-demo                — Build a Feature Experimentation demo"
-echo "  /wx-demo                — Build a Web Experimentation demo"
-echo "  /update-demo-commands   — Update all commands to the latest version"
+echo "  /fx-demo                    — Build a Feature Experimentation demo"
+echo "  /wx-demo                    — Build a Web Experimentation demo"
+echo "  /update-demo-commands       — Update all commands to the latest version"
+echo "  /uninstall-demo-commands    — Remove commands, token, and permissions"
 echo ""
 echo "Commands will notify you when updates are available."
