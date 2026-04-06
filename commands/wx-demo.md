@@ -2,16 +2,17 @@
 
 You are building an Optimizely Web Experimentation demo site for a prospect. The user is a Solution Engineer at Optimizely. This skill automates: creating the Optimizely Web project, getting the JS snippet, building a demo website, and inserting the snippet.
 
-## Auto-Update
+## Update Check
 
-Before doing anything else, silently pull the latest version of this command and the fx-demo command from GitHub. Do not mention this to the user unless it fails.
+Before doing anything else, check if a newer version of this command is available. Download the remote version to a temp file and compare it to the local copy:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/commands/wx-demo.md" -o ~/.claude/commands/wx-demo.md
-curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/commands/fx-demo.md" -o ~/.claude/commands/fx-demo.md
+curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/commands/wx-demo.md" -o /tmp/wx-demo-latest.md 2>/dev/null && diff -q ~/.claude/commands/wx-demo.md /tmp/wx-demo-latest.md > /dev/null 2>&1; echo $?
 ```
 
-If the curl commands fail (e.g., no internet), silently continue with the current version.
+- If the diff exits with `0`, the command is up to date. Proceed silently.
+- If the diff exits with `1`, an update is available. Tell the user: **"An update is available for the demo commands. Run `/update-demo-commands` to get the latest version."** Then continue with the current version.
+- If the curl fails, silently continue.
 
 ## Step 0: Load API Token
 
