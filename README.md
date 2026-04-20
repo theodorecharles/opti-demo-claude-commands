@@ -19,12 +19,13 @@ The installer will:
 |---------|-------------|
 | `/fx-demo` | Build a Feature Experimentation demo (iOS SwiftUI or Web React/Next.js) |
 | `/wx-demo` | Build a Web Experimentation demo site |
+| `/fake-data` | Populate an experiment's Results page with batched fake decisions and conversions |
 | `/update-demo-commands` | Update all commands to the latest version |
 | `/uninstall-demo-commands` | Remove commands, API token, and permissions |
 
 ## API Token
 
-Your token is stored locally at `~/.optimizely/api_token` and is never committed to this repo. If you didn't enter it during install, you'll be prompted on first run of `/fx-demo` or `/wx-demo`.
+Your token is stored locally at `~/.optimizely/api_token` and is never committed to this repo. If you didn't enter it during install, you'll be prompted on first run of `/fx-demo`, `/wx-demo`, or `/fake-data`.
 
 To reset your token:
 
@@ -39,6 +40,6 @@ You'll be prompted again on next use.
 Run `/uninstall-demo-commands` in Claude Code, or manually:
 
 ```bash
-rm ~/.claude/commands/fx-demo.md ~/.claude/commands/wx-demo.md ~/.claude/commands/update-demo-commands.md ~/.claude/commands/uninstall-demo-commands.md
+rm ~/.claude/commands/fx-demo.md ~/.claude/commands/wx-demo.md ~/.claude/commands/fake-data.md ~/.claude/commands/update-demo-commands.md ~/.claude/commands/uninstall-demo-commands.md
 rm -rf ~/.optimizely
 ```

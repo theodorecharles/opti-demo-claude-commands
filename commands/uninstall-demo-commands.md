@@ -7,7 +7,7 @@ Run the following steps:
 ## Step 1: Remove command files
 
 ```bash
-rm -f ~/.claude/commands/fx-demo.md ~/.claude/commands/wx-demo.md ~/.claude/commands/update-demo-commands.md ~/.claude/commands/uninstall-demo-commands.md
+rm -f ~/.claude/commands/fx-demo.md ~/.claude/commands/wx-demo.md ~/.claude/commands/fake-data.md ~/.claude/commands/update-demo-commands.md ~/.claude/commands/uninstall-demo-commands.md
 ```
 
 ## Step 2: Remove API token
