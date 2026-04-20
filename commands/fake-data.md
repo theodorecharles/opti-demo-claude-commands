@@ -59,13 +59,25 @@ Skip metrics where `event_id` is null or the event lookup returns 404 (overall-r
 
 ## Step 3: Ask the user
 
-Show the variation list with IDs + names, then ask:
+Use the `AskUserQuestion` tool to present three multiple-choice questions. Ask them in a single tool call (pass all three as an array) so the user answers in one shot.
 
-1. **How many visitors should we generate?** (integer; 5000 is a reasonable default)
-2. **Which variation should win?** (accept variation_id or name)
-3. **Which variation should lose?** (accept variation_id or name; must differ from winner)
+1. **Question: "How many visitors should we generate?"**
+   - Options (header / description):
+     - `5,000` / "Quick demo"
+     - `10,000` / "Balanced sample"
+     - `20,000` / "Larger sample"
+     - `Custom` / "Enter a specific number"
+   - If the user picks `Custom`, follow up with a plain-text prompt: *"How many visitors? (integer)"* and use their reply as `FD_VISITORS`.
 
-Remaining variations get a neutral conversion rate.
+2. **Question: "Which variation should win?"**
+   - Options: one per variation fetched in Step 2. Header = variation name (truncate/shorten if >25 chars). Description = `variation_id: <id>`.
+   - Store the selected variation's `variation_id` as `FD_WINNER_VARIATION`.
+
+3. **Question: "Which variation should lose?"**
+   - Same options as (2), but prefer calling `AskUserQuestion` a second time AFTER the winner is known so you can omit the winner from the choices.
+   - Store as `FD_LOSER_VARIATION`.
+
+Remaining variations (neither winner nor loser) get a neutral conversion rate.
 
 ## Step 4: Write the batch-sender script
 
