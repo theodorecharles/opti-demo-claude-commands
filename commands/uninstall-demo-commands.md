@@ -36,6 +36,17 @@ if 'permissions' in settings and 'allow' in settings['permissions']:
         'Bash(echo * > ~/.optimizely/api_token',
         'Read(~/.optimizely/api_token)',
         'Write(~/.optimizely/api_token)',
+        'Bash(curl -s https://api.optimizely.com/v2/',
+        'Bash(curl -s "https://api.optimizely.com/v2/',
+        'Bash(curl -fsSL https://api.optimizely.com/v2/',
+        'Write(/tmp/opti_fake_data.py)',
+        'Write(//private/tmp/opti_fake_data.py)',
+        'Read(/tmp/opti_fake_data.py)',
+        'Read(//private/tmp/opti_fake_data.py)',
+        'Bash(python3 /tmp/opti_fake_data.py)',
+        'Bash(rm -f /tmp/opti_fake_data.py)',
+        'Bash(FD_* python3 /tmp/opti_fake_data.py)',
+        'Bash(export FD_',
     ]
     settings['permissions']['allow'] = [
         r for r in settings['permissions']['allow']

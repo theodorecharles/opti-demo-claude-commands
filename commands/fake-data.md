@@ -1,6 +1,6 @@
 # Optimizely Fake Data Generator
 
-Populate an Optimizely experiment's Results page with realistic-looking fake data. Given a Results page URL, this command fetches the experiment's variations and metrics via the REST API, asks how many visitors to simulate and which variation should win/lose, then POSTs batched decision + conversion events to `https://logx.optimizely.com/v1/events` with a **2-second pause between batches** to avoid overloading the API.
+Populate an Optimizely experiment's Results page with realistic-looking fake data. Given a Results page URL, this command fetches the experiment's variations, metrics, and **start time (`earliest`)** via the REST API, asks how many visitors to simulate and which variation should win/lose, then POSTs batched decision + conversion events to `https://logx.optimizely.com/v1/events` with a **1-second pause between batches** to avoid overloading the API. Event timestamps are distributed uniformly across the window **[experiment start → now]**. (Optimizely clamps any future timestamps to ingestion time, so future-spread isn't useful.)
 
 ## Step 0: Load API Token
 
@@ -30,30 +30,43 @@ Parse these three integers from the path:
 
 ## Step 2: Fetch project, variations, and metrics
 
-```bash
-# account_id for the events payload
-curl -s "https://api.optimizely.com/v2/projects/$PROJECT_ID" \
-  -H "Authorization: Bearer $TOKEN"
-# → save .account_id as ACCOUNT_ID
+> **IMPORTANT — issue each `curl` as its own Bash tool call.** Don't chain commands with `;`, `&&`, or newlines; don't assign shell variables (`TOKEN=...`, `PROJECT_ID=...`) — substitute the literal values into the URL and `-H` header. **Don't pipe through `python3 -c` to parse JSON** — read the JSON response directly. These constraints let each command match the pre-approved permission patterns so the user isn't prompted.
 
-# variations[] and metrics[]
-curl -s "https://api.optimizely.com/v2/experiments/$EXPERIMENT_ID" \
-  -H "Authorization: Bearer $TOKEN"
-# → variations[]: each has {variation_id, name}
-# → metrics[]:    each has {event_id, aggregator, scope, field, winning_direction}
-```
-
-For every metric that has an `event_id`, resolve its event key:
+Run these three calls (one per Bash invocation), substituting the actual `<TOKEN>`, `<PROJECT_ID>`, `<EXPERIMENT_ID>`, and each `<EVENT_ID>` inline:
 
 ```bash
-curl -s "https://api.optimizely.com/v2/events/$EVENT_ID" \
-  -H "Authorization: Bearer $TOKEN"
-# → .key is the event's string key (e.g., "add_to_cart")
+curl -s "https://api.optimizely.com/v2/projects/<PROJECT_ID>" -H "Authorization: Bearer <TOKEN>"
 ```
+Read `account_id` from the response → `ACCOUNT_ID`.
+
+```bash
+curl -s "https://api.optimizely.com/v2/experiments/<EXPERIMENT_ID>" -H "Authorization: Bearer <TOKEN>"
+```
+From the response, read:
+- `variations[]` → each has `{variation_id, name}`
+- `metrics[]` → each has `{event_id, aggregator, scope, field, winning_direction}`
+- `earliest` → ISO datetime when the experiment first entered the `running` state
+- `created` → ISO datetime when the experiment record was created (fallback)
+
+For every metric that has an `event_id`, resolve its event key with its own call:
+
+```bash
+curl -s "https://api.optimizely.com/v2/events/<EVENT_ID>" -H "Authorization: Bearer <TOKEN>"
+```
+Read `key` from the response (e.g., `"add_to_cart"`).
+
+Compute `EXPERIMENT_START_MS` (epoch ms) **in your head, not via `python3 -c`**:
+
+1. If `earliest` is set, parse the ISO 8601 string and convert to ms since epoch.
+2. Otherwise if `created` is set, use that.
+3. Otherwise fall back to `(now − 1 hour)` so the script still has *some* range to spread across.
+
+If `EXPERIMENT_START_MS >= now`, clamp it to `now − 1 hour` (a never-started experiment with `created` in the future would otherwise produce a zero/negative range).
 
 Skip metrics where `event_id` is null or the event lookup returns 404 (overall-revenue / page-based metrics without a custom event backer). You now have:
 
 - `ACCOUNT_ID`
+- `EXPERIMENT_START_MS` (computed above)
 - `VARIATIONS`: `[{variation_id, name}, ...]`
 - `METRICS`: `[{event_id, key}, ...]`
 
@@ -62,7 +75,7 @@ Skip metrics where `event_id` is null or the event lookup returns 404 (overall-r
 Use the `AskUserQuestion` tool to present three multiple-choice questions. Ask them in a single tool call (pass all three as an array) so the user answers in one shot.
 
 1. **Question: "How many visitors should we generate?"**
-   - Options (header / description):
+   - Options (label / description):
      - `5,000` / "Quick demo"
      - `10,000` / "Balanced sample"
      - `20,000` / "Larger sample"
@@ -70,7 +83,7 @@ Use the `AskUserQuestion` tool to present three multiple-choice questions. Ask t
    - If the user picks `Custom`, follow up with a plain-text prompt: *"How many visitors? (integer)"* and use their reply as `FD_VISITORS`.
 
 2. **Question: "Which variation should win?"**
-   - Options: one per variation fetched in Step 2. Header = variation name (truncate/shorten if >25 chars). Description = `variation_id: <id>`.
+   - Options: one per variation fetched in Step 2. Label = variation name (truncate/shorten if >25 chars). Description = `variation_id: <id>`.
    - Store the selected variation's `variation_id` as `FD_WINNER_VARIATION`.
 
 3. **Question: "Which variation should lose?"**
@@ -78,6 +91,8 @@ Use the `AskUserQuestion` tool to present three multiple-choice questions. Ask t
    - Store as `FD_LOSER_VARIATION`.
 
 Remaining variations (neither winner nor loser) get a neutral conversion rate.
+
+The timestamp spread window is **not** a user-facing question — it's auto-derived from the experiment's `earliest` field in Step 2. Before running the script, tell the user the window you'll be spreading across (e.g., *"Spreading 5,000 visitors across the experiment's first 6h 12m of activity (since 2026-05-21 06:48 UTC)."*).
 
 ## Step 4: Write the batch-sender script
 
@@ -89,27 +104,42 @@ Write this Python script to `/tmp/opti_fake_data.py`:
 
 All config is passed via env vars (see /fake-data command):
   FD_ACCOUNT_ID, FD_PROJECT_ID, FD_CAMPAIGN_ID, FD_EXPERIMENT_ID
-  FD_VARIATIONS_JSON    [{"variation_id": "...", "name": "..."}, ...]
-  FD_METRICS_JSON       [{"event_id": 123, "key": "..."}, ...]
-  FD_VISITORS           total visitors to simulate (int)
-  FD_WINNER_VARIATION   variation_id
-  FD_LOSER_VARIATION    variation_id
-  FD_BATCH_SIZE         default 1000
-  FD_BATCH_DELAY        default 2.0 (seconds)
+  FD_VARIATIONS_JSON       [{"variation_id": "...", "name": "..."}, ...]
+  FD_METRICS_JSON          [{"event_id": 123, "key": "..."}, ...]
+  FD_VISITORS              total visitors to simulate (int)
+  FD_WINNER_VARIATION      variation_id
+  FD_LOSER_VARIATION       variation_id
+  FD_EXPERIMENT_START_MS   epoch-ms when the experiment first started running
+                           (derived from the experiment's `earliest` field)
+  FD_BATCH_SIZE            default 1000
+  FD_BATCH_DELAY           default 1.0 (seconds)
+
+Visitor timestamps are drawn uniformly from
+[FD_EXPERIMENT_START_MS, now]. Optimizely clamps future timestamps to
+ingestion time, so we never spread forward.
 """
 import json, os, sys, time, uuid, random, urllib.request, urllib.error
 
-ACCOUNT_ID     = os.environ["FD_ACCOUNT_ID"]
-PROJECT_ID     = os.environ["FD_PROJECT_ID"]
-CAMPAIGN_ID    = os.environ["FD_CAMPAIGN_ID"]
-EXPERIMENT_ID  = os.environ["FD_EXPERIMENT_ID"]
-VARIATIONS     = json.loads(os.environ["FD_VARIATIONS_JSON"])
-METRICS        = json.loads(os.environ["FD_METRICS_JSON"])
-TOTAL          = int(os.environ["FD_VISITORS"])
-WINNER         = str(os.environ.get("FD_WINNER_VARIATION", ""))
-LOSER          = str(os.environ.get("FD_LOSER_VARIATION", ""))
-BATCH_SIZE     = int(os.environ.get("FD_BATCH_SIZE", "1000"))
-BATCH_DELAY    = float(os.environ.get("FD_BATCH_DELAY", "2.0"))
+ACCOUNT_ID           = os.environ["FD_ACCOUNT_ID"]
+PROJECT_ID           = os.environ["FD_PROJECT_ID"]
+CAMPAIGN_ID          = os.environ["FD_CAMPAIGN_ID"]
+EXPERIMENT_ID        = os.environ["FD_EXPERIMENT_ID"]
+VARIATIONS           = json.loads(os.environ["FD_VARIATIONS_JSON"])
+METRICS              = json.loads(os.environ["FD_METRICS_JSON"])
+TOTAL                = int(os.environ["FD_VISITORS"])
+WINNER               = str(os.environ.get("FD_WINNER_VARIATION", ""))
+LOSER                = str(os.environ.get("FD_LOSER_VARIATION", ""))
+BATCH_SIZE           = int(os.environ.get("FD_BATCH_SIZE", "1000"))
+BATCH_DELAY          = float(os.environ.get("FD_BATCH_DELAY", "1.0"))
+
+SCRIPT_START_MS      = int(time.time() * 1000)
+EXPERIMENT_START_MS  = int(os.environ.get("FD_EXPERIMENT_START_MS", str(SCRIPT_START_MS - 60 * 60 * 1000)))
+# Guard against bad inputs (start in the future, start > now): clamp to 1h ago.
+if EXPERIMENT_START_MS >= SCRIPT_START_MS:
+    EXPERIMENT_START_MS = SCRIPT_START_MS - 60 * 60 * 1000
+
+def random_timestamp() -> int:
+    return random.randint(EXPERIMENT_START_MS, SCRIPT_START_MS)
 
 def conversion_rate(variation_id: str) -> float:
     if variation_id == WINNER: return 0.15
@@ -185,8 +215,7 @@ total_batches = (TOTAL + BATCH_SIZE - 1) // BATCH_SIZE
 sent = 0
 for b in range(total_batches):
     count = min(BATCH_SIZE, TOTAL - sent)
-    now_ms = int(time.time() * 1000)
-    batch = [build_visitor(now_ms + i) for i in range(count)]
+    batch = [build_visitor(random_timestamp()) for _ in range(count)]
     try:
         status = send(batch)
     except urllib.error.HTTPError as e:
@@ -205,22 +234,17 @@ print(f"Done. Sent {sent} visitors across {total_batches} batch(es).")
 
 ## Step 5: Run the script
 
-Populate the env vars and run:
+> **IMPORTANT — single Bash call, env vars inline.** Run the script with **all** `FD_*` values inlined as `KEY=value` prefixes on a single `python3` invocation. Do **not** use `export` lines, **do not** chain with `;` / `&&`, and **do not** split across multiple Bash calls (env vars don't persist across calls anyway). The whole invocation must be **one long line** so it matches the pre-approved `Bash(FD_* python3 /tmp/opti_fake_data.py)` permission pattern.
+
+Substitute the actual values inline and run as one Bash command:
 
 ```bash
-export FD_ACCOUNT_ID="<ACCOUNT_ID>"
-export FD_PROJECT_ID="<PROJECT_ID>"
-export FD_CAMPAIGN_ID="<CAMPAIGN_ID>"
-export FD_EXPERIMENT_ID="<EXPERIMENT_ID>"
-export FD_VARIATIONS_JSON='[{"variation_id":"1708354","name":"Control"},{"variation_id":"1708374","name":"Variation 1"}]'
-export FD_METRICS_JSON='[{"event_id":5450779331395584,"key":"list_interact"},{"event_id":6254372410097664,"key":"broadway_direct_redirect"}]'
-export FD_VISITORS=5000
-export FD_WINNER_VARIATION="1708374"
-export FD_LOSER_VARIATION="1708354"
-python3 /tmp/opti_fake_data.py
+FD_ACCOUNT_ID="<ACCOUNT_ID>" FD_PROJECT_ID="<PROJECT_ID>" FD_CAMPAIGN_ID="<CAMPAIGN_ID>" FD_EXPERIMENT_ID="<EXPERIMENT_ID>" FD_VARIATIONS_JSON='[{"variation_id":"1708354","name":"Control"},{"variation_id":"1708374","name":"Variation 1"}]' FD_METRICS_JSON='[{"event_id":5450779331395584,"key":"list_interact"},{"event_id":6254372410097664,"key":"broadway_direct_redirect"}]' FD_VISITORS=5000 FD_WINNER_VARIATION="1708374" FD_LOSER_VARIATION="1708354" FD_EXPERIMENT_START_MS=1747795200000 python3 /tmp/opti_fake_data.py
 ```
 
-The script prints progress per batch. With 5000 visitors at 1000/batch, expect 5 batches over ~8 seconds (4 × 2s waits between them).
+Bash treats `KEY=value command` as setting env vars only for the duration of `command`. The script reads each value through `os.environ`. `FD_EXPERIMENT_START_MS` is the ms value computed in Step 2 from `earliest` (or `created` fallback).
+
+The script prints progress per batch. With 5000 visitors at 1000/batch, expect 5 batches over ~4 seconds (4 × 1s waits between them).
 
 ## Step 6: Confirm
 
@@ -235,7 +259,7 @@ The existing fake-data tool (`client_name: ricky/fakedata.pwned v1.0.0`) has two
 1. **Cumulative re-send.** Each subsequent batch re-POSTs every event from prior batches *plus* new ones. In the captured HAR, batch 0 had 2101 event UUIDs, batch 1 had 4175 (all 2101 from batch 0 + 2074 new), batch 2 had 6273, batch 3 had 8405 — 20,954 total events sent for only 8,405 unique. About 2.5× data amplification and duplicate impressions.
 2. **No rate limiting.** Batches fired ~20–30 ms apart (and each was >800 KB). At high visitor counts this will trip Optimizely's ingestion rate limits or starve the connection.
 
-This command sends only the new visitors in each batch and waits 2 seconds between batches.
+This command sends only the new visitors in each batch and waits 1 second between batches.
 
 ## Payload reference (one batch POST body)
 
