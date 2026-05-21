@@ -57,17 +57,24 @@ RULES=(
   'Bash(curl -s https://api.optimizely.com/v2/*)'
   'Bash(curl -s "https://api.optimizely.com/v2/*)'
   'Bash(curl -fsSL https://api.optimizely.com/v2/*)'
-  # /fake-data temp script + env exports
+  # /fake-data temp script (both /tmp and macOS-resolved /private/tmp paths)
   'Write(/tmp/opti_fake_data.py)'
   'Write(//private/tmp/opti_fake_data.py)'
   'Read(/tmp/opti_fake_data.py)'
   'Read(//private/tmp/opti_fake_data.py)'
+  # Broader /tmp read to survive path-normalization quirks between the literal
+  # /tmp request and the macOS-resolved /private/tmp form.
+  'Read(/tmp/**)'
+  'Read(//private/tmp/**)'
   'Bash(python3 /tmp/opti_fake_data.py)'
   'Bash(rm -f /tmp/opti_fake_data.py)'
   # /fake-data inline env-var invocation: `FD_FOO=... FD_BAR=... python3 /tmp/opti_fake_data.py`
   'Bash(FD_* python3 /tmp/opti_fake_data.py)'
   # Legacy `export FD_FOO=...` calls (no-ops, but allowed so they don't prompt)
   'Bash(export FD_*)'
+  # ISO-datetime → epoch conversion for the experiment's `earliest` field.
+  # `date` is effectively read-only (no side effects).
+  'Bash(date *)'
 )
 
 if [ -f "$SETTINGS_FILE" ]; then

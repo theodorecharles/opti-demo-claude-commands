@@ -43,10 +43,13 @@ if 'permissions' in settings and 'allow' in settings['permissions']:
         'Write(//private/tmp/opti_fake_data.py)',
         'Read(/tmp/opti_fake_data.py)',
         'Read(//private/tmp/opti_fake_data.py)',
+        'Read(/tmp/**)',
+        'Read(//private/tmp/**)',
         'Bash(python3 /tmp/opti_fake_data.py)',
         'Bash(rm -f /tmp/opti_fake_data.py)',
         'Bash(FD_* python3 /tmp/opti_fake_data.py)',
         'Bash(export FD_',
+        'Bash(date ',
     ]
     settings['permissions']['allow'] = [
         r for r in settings['permissions']['allow']

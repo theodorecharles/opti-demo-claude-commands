@@ -55,7 +55,7 @@ curl -s "https://api.optimizely.com/v2/events/<EVENT_ID>" -H "Authorization: Bea
 ```
 Read `key` from the response (e.g., `"add_to_cart"`).
 
-Compute `EXPERIMENT_START_MS` (epoch ms) **in your head, not via `python3 -c`**:
+Compute `EXPERIMENT_START_MS` (epoch ms). **Either compute it in your head, or use a single standalone `date` command** (e.g., on macOS: `date -u -j -f "%Y-%m-%dT%H:%M:%S" "2026-05-21T17:21:48" +%s` — then append `000` for ms, or multiply by 1000). **Do not pipe `python3 -c` or chain it with the curl calls.**
 
 1. If `earliest` is set, parse the ISO 8601 string and convert to ms since epoch.
 2. Otherwise if `created` is set, use that.
@@ -72,7 +72,7 @@ Skip metrics where `event_id` is null or the event lookup returns 404 (overall-r
 
 ## Step 3: Ask the user
 
-Use the `AskUserQuestion` tool to present three multiple-choice questions. Ask them in a single tool call (pass all three as an array) so the user answers in one shot.
+Use the `AskUserQuestion` tool. Group **questions 1 and 2** into a single tool call (both questions in the array). Then ask **question 3** as a follow-up — *unless* the experiment has only 2 variations, in which case skip it entirely (see below).
 
 1. **Question: "How many visitors should we generate?"**
    - Options (label / description):
@@ -87,8 +87,9 @@ Use the `AskUserQuestion` tool to present three multiple-choice questions. Ask t
    - Store the selected variation's `variation_id` as `FD_WINNER_VARIATION`.
 
 3. **Question: "Which variation should lose?"**
-   - Same options as (2), but prefer calling `AskUserQuestion` a second time AFTER the winner is known so you can omit the winner from the choices.
-   - Store as `FD_LOSER_VARIATION`.
+   - **If the experiment has exactly 2 variations, skip this question.** Auto-assign `FD_LOSER_VARIATION` to the non-winner variation and briefly tell the user (e.g., *"Only 2 variations — the loser defaults to <name>."*). `AskUserQuestion` requires ≥2 options per question, so a 1-option list (winner removed from a 2-variation experiment) would fail validation.
+   - Otherwise, call `AskUserQuestion` a second time after the winner is known, with options = all variations *except* the winner.
+   - Store the answer as `FD_LOSER_VARIATION`.
 
 Remaining variations (neither winner nor loser) get a neutral conversion rate.
 
