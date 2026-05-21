@@ -19,15 +19,19 @@ else
     BRANCH="main"
 fi
 
-REPO_URL="https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/${BRANCH}/commands"
+REPO_BASE="https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/${BRANCH}"
+REPO_URL="${REPO_BASE}/commands"
+SCRIPTS_URL="${REPO_BASE}/scripts"
 DEST_DIR="$HOME/.claude/commands"
 TOKEN_DIR="$HOME/.optimizely"
 TOKEN_FILE="$TOKEN_DIR/api_token"
+RUNNER_FILE="$TOKEN_DIR/fake_data.py"
 
 echo "==> Installing Optimizely Claude commands from branch: $BRANCH"
 
-# Ensure destination directory exists
+# Ensure destination directories exist
 mkdir -p "$DEST_DIR"
+mkdir -p "$TOKEN_DIR"
 
 # Download latest commands
 echo "    Downloading fx-demo.md..."
@@ -43,83 +47,69 @@ curl -fsSL "$REPO_URL/uninstall-demo-commands.md" -o "$DEST_DIR/uninstall-demo-c
 
 echo "==> Commands installed to $DEST_DIR"
 
-# Add permission rules to Claude settings so commands run without prompts
-SETTINGS_FILE="$HOME/.claude/settings.json"
-RULES=(
-  # Token storage
-  'Bash(cat ~/.optimizely/api_token)'
-  'Read(~/.optimizely/api_token)'
-  'Bash(mkdir -p ~/.optimizely*)'
-  'Bash(echo * > ~/.optimizely/api_token*)'
-  'Write(~/.optimizely/api_token)'
-  # Optimizely REST API reads (used by /fake-data, /fx-demo, /wx-demo).
-  # Trailing `*` lets the rule match additional flags (e.g. -H "Authorization: ...").
-  'Bash(curl -s https://api.optimizely.com/v2/*)'
-  'Bash(curl -s "https://api.optimizely.com/v2/*)'
-  'Bash(curl -fsSL https://api.optimizely.com/v2/*)'
-  # /fake-data temp script (both /tmp and macOS-resolved /private/tmp paths)
-  'Write(/tmp/opti_fake_data.py)'
-  'Write(//private/tmp/opti_fake_data.py)'
-  'Read(/tmp/opti_fake_data.py)'
-  'Read(//private/tmp/opti_fake_data.py)'
-  # Broader /tmp read to survive path-normalization quirks between the literal
-  # /tmp request and the macOS-resolved /private/tmp form.
-  'Read(/tmp/**)'
-  'Read(//private/tmp/**)'
-  'Bash(python3 /tmp/opti_fake_data.py)'
-  'Bash(rm -f /tmp/opti_fake_data.py)'
-  # /fake-data inline env-var invocation: `FD_FOO=... FD_BAR=... python3 /tmp/opti_fake_data.py`
-  'Bash(FD_* python3 /tmp/opti_fake_data.py)'
-  # Legacy `export FD_FOO=...` calls (no-ops, but allowed so they don't prompt)
-  'Bash(export FD_*)'
-  # ISO-datetime → epoch conversion for the experiment's `earliest` field.
-  # `date` is effectively read-only (no side effects).
-  'Bash(date *)'
-)
+# Download the /fake-data runner script alongside the API token
+echo "    Downloading fake_data.py runner..."
+curl -fsSL "$SCRIPTS_URL/opti_fake_data.py" -o "$RUNNER_FILE"
+chmod +x "$RUNNER_FILE"
+echo "==> Runner installed to $RUNNER_FILE"
 
-if [ -f "$SETTINGS_FILE" ]; then
-    # Check if permissions.allow already exists
-    if python3 -c "import json,sys; d=json.load(open('$SETTINGS_FILE')); sys.exit(0 if 'permissions' in d and 'allow' in d['permissions'] else 1)" 2>/dev/null; then
-        # Merge rules into existing allow list
-        python3 -c "
-import json, sys
-rules = json.loads(sys.argv[1])
-with open('$SETTINGS_FILE', 'r') as f:
-    settings = json.load(f)
-existing = set(settings['permissions']['allow'])
-for rule in rules:
-    existing.add(rule)
-settings['permissions']['allow'] = sorted(existing)
-with open('$SETTINGS_FILE', 'w') as f:
+# Configure Claude permissions: add the rules our commands need, and purge
+# rules from older /fake-data versions that are no longer needed (the runner
+# script lives in ~/.optimizely now and does its own HTTP / temp-file work).
+SETTINGS_FILE="$HOME/.claude/settings.json"
+
+python3 - "$SETTINGS_FILE" <<'PYEOF'
+import json, os, sys
+
+settings_file = sys.argv[1]
+
+add_rules = [
+    # Token storage
+    "Bash(cat ~/.optimizely/api_token)",
+    "Read(~/.optimizely/api_token)",
+    "Bash(mkdir -p ~/.optimizely*)",
+    "Bash(echo * > ~/.optimizely/api_token*)",
+    "Write(~/.optimizely/api_token)",
+    # Optimizely REST API reads (used by /fx-demo and /wx-demo only — /fake-data
+    # does its own HTTP via the runner script). Trailing `*` matches the
+    # `-H "Authorization: ..."` flag and quoted/unquoted URL variants.
+    'Bash(curl -s https://api.optimizely.com/v2/*)',
+    'Bash(curl -s "https://api.optimizely.com/v2/*)',
+    'Bash(curl -fsSL https://api.optimizely.com/v2/*)',
+    # /fake-data runner — one rule covers `info` and `send` plus any flags.
+    "Bash(python3 ~/.optimizely/fake_data.py *)",
+]
+
+# Rules added by earlier install.sh versions that are obsolete now.
+remove_rules = {
+    "Write(/tmp/opti_fake_data.py)",
+    "Write(//private/tmp/opti_fake_data.py)",
+    "Read(/tmp/opti_fake_data.py)",
+    "Read(//private/tmp/opti_fake_data.py)",
+    "Read(/tmp/**)",
+    "Read(//private/tmp/**)",
+    "Bash(python3 /tmp/opti_fake_data.py)",
+    "Bash(rm -f /tmp/opti_fake_data.py)",
+    "Bash(FD_* python3 /tmp/opti_fake_data.py)",
+    "Bash(export FD_*)",
+    "Bash(date *)",
+}
+
+settings = {}
+if os.path.exists(settings_file):
+    with open(settings_file) as f:
+        settings = json.load(f)
+
+perms = settings.setdefault("permissions", {})
+existing = set(perms.get("allow", []))
+existing -= remove_rules
+existing |= set(add_rules)
+perms["allow"] = sorted(existing)
+
+with open(settings_file, "w") as f:
     json.dump(settings, f, indent=2)
-    f.write('\n')
-" "$(printf '%s\n' "${RULES[@]}" | python3 -c "import json,sys; print(json.dumps([l.strip() for l in sys.stdin]))")"
-    else
-        # Add permissions block, merging with existing settings
-        python3 -c "
-import json, sys
-rules = json.loads(sys.argv[1])
-with open('$SETTINGS_FILE', 'r') as f:
-    settings = json.load(f)
-if 'permissions' not in settings:
-    settings['permissions'] = {}
-settings['permissions']['allow'] = rules
-with open('$SETTINGS_FILE', 'w') as f:
-    json.dump(settings, f, indent=2)
-    f.write('\n')
-" "$(printf '%s\n' "${RULES[@]}" | python3 -c "import json,sys; print(json.dumps([l.strip() for l in sys.stdin]))")"
-    fi
-else
-    # Create settings file from scratch
-    python3 -c "
-import json, sys
-rules = json.loads(sys.argv[1])
-settings = {'permissions': {'allow': rules}}
-with open('$SETTINGS_FILE', 'w') as f:
-    json.dump(settings, f, indent=2)
-    f.write('\n')
-" "$(printf '%s\n' "${RULES[@]}" | python3 -c "import json,sys; print(json.dumps([l.strip() for l in sys.stdin]))")"
-fi
+    f.write("\n")
+PYEOF
 
 echo "==> Permissions configured (commands will run without prompts)"
 
