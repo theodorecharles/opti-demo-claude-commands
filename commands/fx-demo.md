@@ -34,6 +34,8 @@ If any of these are missing, ask before proceeding.
 - **Base URL**: `https://api.optimizely.com`
 - **Auth Header**: `Authorization: Bearer <TOKEN>` (where `<TOKEN>` is loaded from Step 0)
 
+**Shell note**: The default shell here is **zsh**, which (unlike bash) does **not** word-split unquoted parameter expansions. Any `for x in $var` loop over a space-separated string will iterate **once** over the whole string, not per word. In scripts you write (e.g. loops over flag keys, the `create-audiences.sh` below), use an explicit list (`for x in a b c`), an array (`arr=(...)`; `for x in "${arr[@]}"`), or zsh's split form `${=var}`.
+
 ## Step 1: Create the Optimizely FX Project
 
 **CRITICAL**: You MUST include `"is_flags_enabled": true` in the request body. Without this, the API creates a legacy FullStack project (sunset) that does NOT support the flags v1 API. Only `is_flags_enabled: true` creates a proper Feature Experimentation project. **Do NOT omit this field under any circumstances.**
@@ -124,6 +126,35 @@ curl -s -X POST "https://api.optimizely.com/flags/v1/projects/<PROJECT_ID>/flags
 
 **Important**: Every variable in `variable_definitions` MUST include a `"key"` field matching its dictionary key.
 
+### (Optional) Enable a flag at 100% via the API
+
+By default a newly-created flag ships **OFF**: `decide()` returns `enabled: false` and only the auto-created `off` variation serves at 100%. That's a perfectly good **live-toggle** starting point — the SE flips the flag on in the Optimizely UI during the demo and the app reacts within ~2s (this is the default the rest of this skill assumes).
+
+If you instead want the flag serving **on** at 100% immediately (so the demo works out of the box / can be screenshot-verified), add a delivery rule with a **JSON Patch**. Verified facts about this API:
+
+- The `on` and `off` variations are **auto-created** with the flag — POSTing an `on` variation returns `409 already exists`.
+- There is **no** `POST .../rules` endpoint (it 404s), and `/ruleset/enabled` is `405`. You enable + add a delivery rule by PATCHing the **ruleset base URL** with a JSON Patch **array** body. Use the environment **key** (e.g. `development`) — matching the environment whose SDK key the app uses — not the numeric env ID:
+
+```bash
+curl -s -X PATCH \
+  "https://api.optimizely.com/flags/v1/projects/<PROJECT_ID>/flags/<FLAG_KEY>/environments/<ENV_KEY>/ruleset" \
+  -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" \
+  -d '[
+    {"op":"add","path":"/rules/everyone","value":{
+      "key":"everyone","name":"Everyone","type":"targeted_delivery",
+      "audience_conditions":[],"percentage_included":10000,"enabled":true,
+      "variations":{"on":{"key":"on","percentage_included":10000}}
+    }},
+    {"op":"replace","path":"/rule_priorities","value":["everyone"]}
+  ]'
+```
+
+Then verify the CDN datafile flips to serving the `on` variation (`featureEnabled: true`). Add a cache-buster query param and allow a few seconds for the CDN to refresh:
+
+```bash
+curl -s "https://cdn.optimizely.com/datafiles/<SDK_KEY>.json?cb=$(date +%s)"
+```
+
 ## Step 5: Create Custom Events
 
 ```bash
@@ -158,10 +189,71 @@ curl -s -X POST "https://api.optimizely.com/v2/projects/<PROJECT_ID>/custom_even
 
 ### For Web (React/Next.js):
 
-1. Install `@optimizely/react-sdk`
-2. Use `<OptimizelyProvider>` with `SDK_KEY` and `datafileOptions: { autoUpdate: true, updateInterval: 2000 }`
-3. Use `useDecision('flag_key')` hook for feature decisions
-4. Use `optimizely.track('event_key')` for event tracking
+The package that installs today is **`@optimizely/react-sdk@4.x`** (built on `optimizely-sdk@6`), which uses a **modular** API. The old `datafileOptions` / `useDecision` / `optimizely.track` API **no longer exists** — do NOT use it. The following is verified working against react-sdk 4.0.0 / Next.js 16 / React 19.
+
+1. Install the SDK (React 19 peer ranges require the legacy flag):
+   ```bash
+   npm install @optimizely/react-sdk --legacy-peer-deps
+   ```
+2. Create the client with the modular config manager + event processor (this replaces `datafileOptions`):
+   ```ts
+   import {
+     createInstance,
+     createPollingProjectConfigManager,
+     createBatchEventProcessor,
+   } from "@optimizely/react-sdk";
+
+   const optimizely = createInstance({
+     projectConfigManager: createPollingProjectConfigManager({
+       sdkKey: SDK_KEY,
+       autoUpdate: true,
+       updateInterval: 2000, // 2s polling so UI reacts to flag toggles live
+     }),
+     eventProcessor: createBatchEventProcessor({ flushInterval: 1000, batchSize: 10 }),
+   });
+   ```
+3. Wrap the app in `<OptimizelyProvider>` — props are `client` + `user` (changing the `user` prop re-decides, which is exactly what you want for live attribute/audience targeting):
+   ```tsx
+   <OptimizelyProvider client={optimizely} user={{ id: userId, attributes }} timeout={500}>
+   ```
+4. For feature decisions use the **`useDecide`** hook (NOT `useDecision`):
+   ```ts
+   const { isLoading, error, decision } = useDecide("flag_key");
+   // decision?.enabled   -> boolean (gate the feature on this)
+   // decision?.variables -> { [key]: unknown } (cast as needed)
+   ```
+   Other exported hooks: `useDecideForKeys`, `useDecideAll`, `useOptimizelyClient`, `useOptimizelyUserContext`.
+5. For event tracking, go through the **user context** (NOT `optimizely.track`):
+   ```ts
+   const { userContext } = useOptimizelyUserContext();
+   userContext?.trackEvent("purchase_completed", {
+     revenue: Math.round(total * 100), // reserved: integer cents
+     value: Number(total.toFixed(2)),  // reserved: float
+     // ...custom tags
+   });
+   ```
+6. **IMPORTANT**: Gate UI on `decision.enabled` (same principle as iOS) so toggling the flag on/off in the Optimizely UI works immediately without needing rules/variations configured.
+
+#### Web build notes (Next.js 16 / create-next-app):
+
+- `create-next-app .` **fails if the current directory name has capital letters** (npm package-naming rules). Scaffold into a **lowercase** subdir, e.g.:
+  ```bash
+  npx create-next-app@latest cort-checkout --ts --tailwind --eslint --app --src-dir --import-alias "@/*" --use-npm --yes
+  ```
+- Next.js 16 uses **Turbopack by default** — the package scripts are just `next dev` / `next build` (no `--turbopack` flag). `next lint` was **removed**.
+- A stray `package-lock.json` in a parent/home dir confuses Turbopack's workspace-root inference. Pin the root in `next.config.ts`:
+  ```ts
+  import path from "path";
+  const nextConfig = { turbopack: { root: path.resolve(__dirname) } };
+  export default nextConfig;
+  ```
+- For remote product images (Unsplash), prefer a plain `<img>` with an `onError` fallback over `next/image` — Next 16 tightened `next/image` (required `remotePatterns`, new `qualities` / `maximumRedirects` defaults). **Validate that each Unsplash photo ID returns HTTP 200 before using it**, and keep a branded fallback tile so the catalog never looks broken.
+- The scaffold's `AGENTS.md` notes Next 16's breaking changes and points to `node_modules/next/dist/docs/` — worth a read if something behaves unexpectedly.
+
+#### SSR / hydration (this is a client-heavy SDK app):
+
+- The Optimizely client (polling config manager + event processor) and `localStorage` must run **browser-only**. Gate the interactive tree behind a `mounted` check (render a splash on the server / first paint), and create the client **lazily** — a `typeof window` guard or a `useState`/singleton inside the client boundary.
+- If you persist cart/state to `localStorage`, **don't let the persist effect write before the hydrate effect commits** — otherwise the initial empty state clobbers saved data on refresh (React StrictMode double-invoking effects in dev makes this worse). Gate persistence on a `hydrated` flag that you set at the **end** of the hydrate effect.
 
 ## Step 7: Build and Run
 
@@ -197,7 +289,7 @@ curl -s -X POST "https://api.optimizely.com/v2/audiences" \
 ```
 
 ### Audience conditions format notes:
-- Must be a JSON **string** (escaped JSON inside a string)
+- `conditions` must be a **stringified JSON array** (escaped JSON inside a string). Passing a raw array returns `400 ... is not of type 'string'`.
 - Structure: `["and", ["or", ["or", {condition}]]]` (nested and/or/or)
 - Each condition: `{"match_type": "exact", "name": "<attr_key>", "type": "custom_attribute", "value": <val>}`
 - Valid match_type values: `"exact"`, `"exists"`, `"substring"`, `"gt"`, `"lt"`
@@ -205,10 +297,11 @@ curl -s -X POST "https://api.optimizely.com/v2/audiences" \
 - String values: `"some_string"`
 
 ### Handling propagation delay:
-- If audience creation fails with "Custom attribute does not exist", the attribute hasn't propagated yet
-- Retry up to 3 times with 30-second delays
-- If still failing after retries, inform the user: "Attributes are created and working in the SDK. Audiences need to be created manually in the Optimizely UI, or you can re-run `/optimizely-demo` later to retry audience creation."
-- The SDK/app will work correctly for targeting regardless — audiences are only needed for the Optimizely UI rule configuration
+- If audience creation fails with `Custom attribute '<key>' does not exist`, the audience-conditions validator hasn't caught up yet. **Do NOT promise success after a few retries.** In practice the attributes were present in `/v2/attributes` **and** in the live datafile, yet `/v2/audiences` still rejected them well past 3×30s — its validator keeps a separate cache that can lag **minutes to hours**.
+- A couple of quick retries (e.g. 2×30s) is fine to catch the fast case, but don't block the demo waiting on it.
+- Instead, **ship a re-runnable `create-audiences.sh` script** (the curl call above, parameterized over the audiences you want) that the SE can run later once the cache catches up. (Mind the zsh **Shell note** above if the script loops over attribute/audience lists.)
+- Tell the SE the **Optimizely UI** audience builder does **not** have this lag — building the audience in the UI works immediately. That's the fastest path if they need it during the demo.
+- Either way, the SDK/app targeting works regardless, because the attributes are already in the datafile. Audiences are only needed for the Optimizely UI's rule configuration.
 
 ## Step 9: Verify
 
