@@ -144,7 +144,7 @@ def build_visitor(meta, variation_id, conv_rate, timestamp_ms):
     for m in meta["metrics"]:
         if random.random() < conv_rate:
             events.append({
-                "entity_id": int(m["event_id"]),
+                "entity_id": str(m["event_id"]),
                 "uuid": str(uuid.uuid4()).upper(),
                 "key": m["key"],
                 "timestamp": timestamp_ms,
