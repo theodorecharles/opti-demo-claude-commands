@@ -27,6 +27,11 @@ ADD_RULES = [
     "Bash(*)",
     # --- Token storage -----------------------------------------------------
     "Bash(cat ~/.optimizely/api_token)",
+    # The Read TOOL is a separate axis from Bash(*): reading files OUTSIDE the
+    # demo project (the runners + token live in ~/.optimizely) needs a Read()
+    # rule. Cover the whole dir so the model can inspect opti_config.py, the
+    # token, and the slides package without a prompt.
+    "Read(~/.optimizely/**)",
     "Read(~/.optimizely/api_token)",
     "Bash(mkdir -p ~/.optimizely*)",
     "Bash(echo * > ~/.optimizely/api_token*)",
