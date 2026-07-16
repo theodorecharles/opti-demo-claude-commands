@@ -6,7 +6,7 @@ effort: xhigh
 
 # Optimizely Feature Experimentation Demo Builder
 
-You are building an Optimizely Feature Experimentation demo app for a prospect. The user is a Solution Engineer at Optimizely. This skill automates the full end-to-end workflow: creating the Optimizely FX project, retrieving the SDK key, creating feature flags/events/attributes/audiences, building the demo app, and running it.
+You are building an Optimizely Feature Experimentation demo app for a prospect. The user is a Solution Engineer at Optimizely. This skill automates the full end-to-end workflow: creating the Optimizely FX project, retrieving the SDK key, creating attributes/events/audiences, creating feature flags **with variables and variations**, wiring up **targeting rules** (targeted delivery + A/B experiments) that serve those variations, building the demo app, and running it.
 
 ## Step 0: Load API Token
 
@@ -24,11 +24,27 @@ cat ~/.optimizely/api_token
     ```
   - Then proceed with that token.
 
-Also make sure the project-config runner is present (it does all the Optimizely
-API work in this skill). If `~/.optimizely/opti_config.py` is missing, download it:
+Also refresh the project-config runner (it does all the Optimizely API work in
+this skill). **Always pull the latest** — the runner gains capabilities over time
+(e.g. flag variations and targeting rules), and an older cached copy silently
+lacks them. Download to a temp file and only replace on success, so a failed
+download (offline) leaves any existing runner intact:
 
 ```bash
-[ -f ~/.optimizely/opti_config.py ] || (mkdir -p ~/.optimizely && curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/scripts/opti_config.py" -o ~/.optimizely/opti_config.py && chmod +x ~/.optimizely/opti_config.py)
+mkdir -p ~/.optimizely && \
+  curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/scripts/opti_config.py" -o ~/.optimizely/opti_config.py.new \
+  && mv ~/.optimizely/opti_config.py.new ~/.optimizely/opti_config.py \
+  && chmod +x ~/.optimizely/opti_config.py
+```
+
+(Downloading to `.new` and only `mv`-ing on success means a failed/offline
+download leaves any existing runner untouched.)
+
+Confirm it supports the subcommands this skill needs (`flags` variations + the
+`rules` command). If `rules` is missing, the refresh didn't take:
+
+```bash
+python3 ~/.optimizely/opti_config.py --help | grep -q rules && echo "runner OK (has rules)" || echo "runner STALE — re-download"
 ```
 
 The runner reads the token from `~/.optimizely/api_token` itself, so you don't
@@ -50,11 +66,17 @@ If any of these are missing, ask before proceeding.
 All Optimizely-side setup runs through the project-config runner
 (`~/.optimizely/opti_config.py`) rather than hand-written curl — it's faster and
 encodes the tricky parts correctly (the `is_flags_enabled` project flag, prod
-unrestriction, and — importantly — audience attribute-name resolution). Every
-subcommand reads the token from `~/.optimizely/api_token` and prints JSON. The
-bulk subcommands take a spec via `--spec FILE` or `--json '<inline>'` and skip
-entities that already exist, so re-runs are safe. Read each command's JSON
-output before moving on.
+unrestriction, audience attribute-name resolution, and the flags-ruleset shape
+for variations/rules — variation values go under `variables` as `{value}`, A/B
+rules need a metric, audience ids must be integers, and the flag must be enabled
+in the environment or no rule serves). Every subcommand reads the token from
+`~/.optimizely/api_token` and prints JSON. The bulk subcommands take a spec via
+`--spec FILE` or `--json '<inline>'` and skip entities that already exist, so
+re-runs are safe. Read each command's JSON output before moving on.
+
+Subcommands: `project`, `attributes`, `flags` (now also creates custom
+**variations**), `events`, `audiences`, `rules` (targeting rules that serve
+specific variations), and `enable-flag`.
 
 ## Step 1: Create the project (+ SDK keys)
 
@@ -87,7 +109,13 @@ each attribute a human-readable `name`** (e.g. key `loyalty_tier` → name
 the runner maps key → display name for you, which is the whole reason audience
 creation is now reliable (see Step 5).
 
-## Step 3: Create feature flags
+## Step 3: Create feature flags (with variables AND variations)
+
+Every flag should get **variables** (dynamic config) AND **custom variations**
+(named value-sets the app/experiment serves). Without variations you only get the
+auto-created `on`/`off` — which is exactly the "I only see on or off" gap. Define
+both in one call: put the schema in `variable_definitions` and the concrete
+value-sets in `variations`.
 
 ```bash
 python3 ~/.optimizely/opti_config.py flags --project <PROJECT_ID> --json '[
@@ -96,20 +124,32 @@ python3 ~/.optimizely/opti_config.py flags --project <PROJECT_ID> --json '[
      "headline":  {"type": "string", "default_value": "The default headline", "description": "Hero headline"},
      "bg_color":  {"type": "string", "default_value": "#000000", "description": "Hero background"},
      "cta_label": {"type": "string", "default_value": "Shop now", "description": "CTA text"}
-   }}
+   },
+   "variations": [
+     {"key": "control",   "name": "Control",
+      "variable_values": {"headline": "The default headline", "bg_color": "#000000", "cta_label": "Shop now"}},
+     {"key": "treatment", "name": "Treatment",
+      "variable_values": {"headline": "Welcome back — 20% off", "bg_color": "#0B5FFF", "cta_label": "Claim your deal"}}
+   ]}
 ]'
 ```
 
-`type` is one of `string|boolean|integer|double|json`. The runner fills in each
-variable's required `key` for you.
+- `variable_definitions` `type` is one of `string|boolean|integer|double|json`.
+  The runner fills in each variable's required `key` for you.
+- `variations` each become a **real named variation** on the flag (alongside the
+  auto-created `on`/`off`). `variable_values` overrides the defaults; any variable
+  you omit is backfilled from its default so every variation defines the same
+  variables (the API requires this). Values are coerced to the strings the flags
+  API expects. Give the first variation the control/baseline values.
+- The **variations are what Step 6's targeting rules reference by key**, so create
+  them here before you build rules.
 
 **Flags ship OFF by default** (`decide()` returns `enabled: false`, serving the
 auto-created `off` variation) — this is the right **live-toggle** starting point:
 the SE flips the flag on in the Optimizely UI during the demo and the app reacts
-within ~2s. That's the default the rest of this skill assumes.
-
-To instead serve a flag **ON at 100%** immediately (so the demo works out of the
-box / can be screenshot-verified), add an everyone-delivery rule:
+within ~2s. Step 6 (targeting rules) enables the flag so its variations serve; if
+you skip Step 6 and just want a flag **ON at 100%** immediately (so the demo works
+out of the box / can be screenshot-verified), add an everyone-delivery rule:
 
 ```bash
 python3 ~/.optimizely/opti_config.py enable-flag --project <PROJECT_ID> --flag <FLAG_KEY> --env-key development
@@ -157,7 +197,54 @@ the correct display name, so audiences create on the first try. (Use
 `--dry-run` to print the exact conditions without creating anything.) If you
 ever do hit a genuine transient, just re-run — existing audiences are skipped.
 
-## Step 6: Build the Demo App
+## Step 6: Create targeting rules (serve the variations)
+
+Now wire the variations (Step 3) and audiences (Step 5) together into **targeting
+rules** so the flag serves real variations instead of just on/off. This is the
+step that turns "on/off" into an actual experiment. Two rule types cover almost
+every demo:
+
+- **`targeted_delivery`** — deliver ONE variation to a specific audience (great
+  for "Gold members always see the premium hero"). No metric required.
+- **`a/b`** — split traffic across variations (the classic experiment). **An
+  `a/b` rule REQUIRES at least one metric** (an event key from Step 4).
+
+Rules are evaluated in spec order (first = highest priority), so list targeted
+deliveries before the catch-all A/B split:
+
+```bash
+python3 ~/.optimizely/opti_config.py rules --project <PROJECT_ID> --flag homepage_hero --env-key development --json '[
+  {"key": "gold_gets_treatment", "name": "Gold members see treatment",
+   "type": "targeted_delivery", "audience": "Gold Loyalty Tier", "variation": "treatment"},
+  {"key": "hero_ab", "name": "Hero A/B (everyone else)",
+   "type": "a/b", "distribution": {"control": 5000, "treatment": 5000},
+   "metrics": ["purchase_completed"]}
+]'
+```
+
+- `audience` is the audience **name** from Step 5 (the runner resolves it to the
+  id). Omit targeting to match everyone.
+- `distribution` maps variation key → basis points and **must sum to 10000**
+  (10000 = 100%). Shorthands: `variation` (single key) or `variations` (list,
+  split evenly).
+- `metrics` entries are event keys (from Step 4); pass an object
+  `{"event": "purchase_completed", "winning_direction": "increasing"}` to override
+  aggregator/direction/scope.
+- The runner **enables the flag in that environment by default** so the rules
+  actually serve (a disabled flag compiles none of its rules into the datafile).
+  Pass `--no-enable` to keep the OFF-by-default live-toggle starting point — then
+  the SE flips it on in the UI mid-demo and all the pre-built rules light up.
+
+Confirm the datafile compiled the rules (allow a few seconds for the CDN) — you
+should see the A/B rule under `experiments` and the targeted delivery under
+`rollouts`, each with its variations:
+
+```bash
+curl -s "https://cdn.optimizely.com/datafiles/<SDK_KEY>.json?cb=$(date +%s)" \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);print('experiments:',[(e['key'],[v['key'] for v in e['variations']]) for e in d.get('experiments',[])]);print('rollout rules:',[(x['key'],x.get('audienceIds')) for r in d.get('rollouts',[]) for x in r.get('experiments',[])])"
+```
+
+## Step 7: Build the Demo App
 
 ### For iOS (SwiftUI):
 
@@ -291,7 +378,7 @@ The deck then builds and serves with the app in the next step — `/slides` (dec
 and `/slides/adobe-comparison` (Adobe Target → Optimizely concept map) become
 routes of the demo itself.
 
-## Step 7: Build and Run
+## Step 8: Build and Run
 
 ### iOS:
 ```bash
@@ -308,9 +395,9 @@ xcrun simctl launch "iPhone 17 Pro" <bundle_id>
 npm run dev
 ```
 
-## Step 8: Verify
+## Step 9: Verify
 
-Take a screenshot of the running app and show it to the user. Confirm all feature flags are working and events are being tracked. For the Web track, also confirm `/slides` and `/slides/adobe-comparison` appear in the route list and the deck loads (screenshot `http://localhost:3000/slides`).
+Take a screenshot of the running app and show it to the user. Confirm all feature flags are working and events are being tracked. Exercise the **variations and targeting rules** from Step 6 — e.g. switch the user's attributes so a targeted-delivery audience matches and confirm the app renders that variation's values. For the Web track, also confirm `/slides` and `/slides/adobe-comparison` appear in the route list and the deck loads (screenshot `http://localhost:3000/slides`).
 
 ## Key Principles for Demo Apps
 
@@ -328,8 +415,9 @@ After completing all steps, summarize:
 1. Optimizely project name and ID
 2. SDK key (development environment)
 3. All attributes created
-4. All feature flags created with their variables
+4. All feature flags created, with their variables **and variations**
 5. All events created
 6. Audiences created
-7. App location and how to run it
-8. (Web track) The Optimizely Slides deck at `/slides`, and what you tailored in `slides.config.ts`
+7. Targeting rules created (per flag: type, variations served, audience)
+8. App location and how to run it
+9. (Web track) The Optimizely Slides deck at `/slides`, and what you tailored in `slides.config.ts`

@@ -9,9 +9,11 @@ Subcommands
 -----------
   project    Create a project (+ unrestrict prod, return SDK keys / snippet).
   attributes Bulk-create custom attributes.
-  flags      Bulk-create feature flags (FX).
+  flags      Bulk-create feature flags (FX) + their custom variations.
   events     Bulk-create custom events.
   audiences  Bulk-create audiences — resolves attribute key -> DISPLAY NAME.
+  rules      Add targeting rules (a/b split or targeted_delivery) that serve
+             specific variations, optionally scoped to an audience.
   enable-flag  Turn a flag ON at 100% in an environment (JSON Patch ruleset).
 
 Each create subcommand reads a spec (a JSON array) from --spec FILE, --json
@@ -37,7 +39,17 @@ Spec formats
   flags:      [{"key": "homepage_hero", "name": "Homepage Hero",
                 "description": "...",
                 "variable_definitions": {"headline": {"key": "headline",
-                    "type": "string", "default_value": "Hi", "description": ""}}}]
+                    "type": "string", "default_value": "Hi", "description": ""}},
+                "variations": [
+                    {"key": "control",   "name": "Control",
+                     "variable_values": {"headline": "Hi"}},
+                    {"key": "treatment", "name": "Treatment",
+                     "variable_values": {"headline": "Welcome back!"}}]}]
+                # `variations` is optional. Each entry becomes a real, named
+                # flag variation (beyond the auto-created on/off) whose
+                # variable_values override the defaults. Missing variables are
+                # backfilled from the flag's defaults, and every value is coerced
+                # to the string the flags API expects.
   events:     [{"key": "add_to_cart", "name": "Add To Cart", "description": ""}]
   audiences:  [
     {"name": "Gold Members", "attribute": "loyalty_tier", "value": "gold"},
@@ -52,6 +64,28 @@ Spec formats
   match_type defaults to "exact". `attribute` is the attribute KEY (the script
   maps it to the display name). You may also pass "name" (the display name) or a
   raw "conditions" string to bypass resolution entirely.
+
+  rules:      [
+    # A/B split of two variations to everyone (50/50), measured by an event:
+    {"key": "hero_ab", "name": "Hero A/B", "type": "a/b",
+     "distribution": {"control": 5000, "treatment": 5000},
+     "metrics": ["purchase_completed"]},
+    # Deliver one variation to a targeted audience (by audience NAME):
+    {"key": "gold_hero", "name": "Gold members get treatment",
+     "type": "targeted_delivery", "audience": "Gold Loyalty Tier",
+     "variation": "treatment"}
+  ]
+  Rule fields: `key`, `name`, `type` ("a/b" | "targeted_delivery", default
+  "a/b"), `enabled` (default true) and `percentage_included` (basis points,
+  default 10000 = 100% of matched traffic enters the rule). Targeting: pass
+  `audience` (name -> resolved to id) or `audience_id`; omit to target everyone.
+  Variations: `distribution` maps variation key -> basis points (must sum to
+  10000) for an a/b split; or pass `variation` (single key) / `variations` (list,
+  split evenly) as a shorthand. Referenced variations must already exist on the
+  flag (create them in the `flags` step). Metrics: `a/b` rules REQUIRE >=1
+  `metrics` entry — an event key string, or {"event": "<key>", "aggregator":
+  "unique", "winning_direction": "increasing", "scope": "visitor"} to override
+  defaults. `rules` takes --flag and --env-key.
 """
 import argparse
 import json
@@ -152,6 +186,16 @@ def as_list(spec):
     return spec if isinstance(spec, list) else [spec]
 
 
+def stringify(v):
+    """Coerce a variable value to the string the flags API stores. booleans ->
+    "true"/"false", dict/list (json vars) -> compact JSON, everything else str()."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (dict, list)):
+        return json.dumps(v)
+    return str(v)
+
+
 # --------------------------------------------------------------------------- #
 # project
 # --------------------------------------------------------------------------- #
@@ -244,6 +288,50 @@ def cmd_attributes(args):
 # --------------------------------------------------------------------------- #
 # flags
 # --------------------------------------------------------------------------- #
+def _flag_variable_defaults(pid, flag_key, token, spec_defs=None):
+    """Map variable key -> default value (as a string) for a flag. Prefers the
+    definitions in the spec (present when we just created the flag); otherwise
+    GETs the flag so variations on a pre-existing flag still backfill correctly."""
+    if spec_defs:
+        return {vk: stringify(vd.get("default_value", "")) for vk, vd in spec_defs.items()}
+    _, flag = api("GET", f"/flags/v1/projects/{pid}/flags/{flag_key}", token, allow=(404,))
+    vdefs = (flag or {}).get("variable_definitions") or {} if isinstance(flag, dict) else {}
+    return {vk: stringify(vd.get("default_value", "")) for vk, vd in vdefs.items()}
+
+
+def _create_variations(pid, flag_key, variations, token, spec_defs=None):
+    """Create custom flag variations (idempotent by key). Each variation's
+    variable_values are backfilled from the flag defaults so every variation
+    defines the same variables, which the flags API requires."""
+    _, resp = api("GET", f"/flags/v1/projects/{pid}/flags/{flag_key}/variations?per_page=100",
+                  token, allow=(404,))
+    have = {v["key"] for v in (resp.get("items", []) if isinstance(resp, dict) else [])
+            if isinstance(v, dict) and "key" in v}
+    defaults = _flag_variable_defaults(pid, flag_key, token, spec_defs)
+    out = []
+    for v in variations:
+        vkey = v["key"]
+        if vkey in have:
+            out.append({"key": vkey, "status": "exists"})
+            continue
+        values = dict(defaults)
+        for k, val in (v.get("variable_values") or {}).items():
+            values[k] = stringify(val)
+        # The variations API takes `variables` as a map of key -> {value}. A flat
+        # `variable_values` map is rejected ("Unknown field"), and an inner `key`
+        # is rejected as read-only — only `value` is writable.
+        body = {
+            "key": vkey,
+            "name": v.get("name", vkey),
+            "description": v.get("description", ""),
+            "variables": {k: {"value": val} for k, val in values.items()},
+        }
+        status, _ = api("POST", f"/flags/v1/projects/{pid}/flags/{flag_key}/variations",
+                        token, body, allow=(409,))
+        out.append({"key": vkey, "status": "created" if status in (200, 201) else "exists"})
+    return out
+
+
 def cmd_flags(args):
     token = load_token()
     pid = args.project
@@ -255,27 +343,31 @@ def cmd_flags(args):
     results = []
     for item in as_list(load_spec(args)):
         key = item["key"]
-        if key in existing:
-            results.append({"key": key, "status": "exists"})
-            continue
-        body = {
-            "key": key,
-            "name": item.get("name", key),
-            "description": item.get("description", ""),
-        }
+        spec_defs = None
         if item.get("variable_definitions"):
             # Every variable must carry a "key" matching its dict key.
-            vdefs = {}
+            spec_defs = {}
             for vk, vd in item["variable_definitions"].items():
                 vd = dict(vd)
                 vd.setdefault("key", vk)
-                vdefs[vk] = vd
-            body["variable_definitions"] = vdefs
-        status, resp = api("POST", f"/flags/v1/projects/{pid}/flags", token, body, allow=(409,))
-        results.append({
-            "key": key,
-            "status": "created" if status in (200, 201) else "exists",
-        })
+                spec_defs[vk] = vd
+        if key in existing:
+            row = {"key": key, "status": "exists"}
+        else:
+            body = {
+                "key": key,
+                "name": item.get("name", key),
+                "description": item.get("description", ""),
+            }
+            if spec_defs:
+                body["variable_definitions"] = spec_defs
+            status, resp = api("POST", f"/flags/v1/projects/{pid}/flags", token, body, allow=(409,))
+            row = {"key": key, "status": "created" if status in (200, 201) else "exists"}
+        # Create custom variations whether the flag is new or pre-existing — a
+        # re-run may be filling in variations that weren't there before.
+        if item.get("variations"):
+            row["variations"] = _create_variations(pid, key, item["variations"], token, spec_defs)
+        results.append(row)
     print(json.dumps({"flags": results}, indent=2))
 
 
@@ -397,6 +489,139 @@ def cmd_audiences(args):
 
 
 # --------------------------------------------------------------------------- #
+# rules  (targeting rules that serve specific variations)
+# --------------------------------------------------------------------------- #
+def _rule_variations(rule):
+    """Build the ruleset `variations` map (variation key -> {key, pct}) from a
+    rule spec. Accepts `distribution` (key -> basis points), a single
+    `variation` key, or a `variations` list split evenly. Sums to 10000."""
+    dist = rule.get("distribution")
+    if isinstance(dist, dict) and dist:
+        return {vk: {"key": vk, "percentage_included": int(pct)} for vk, pct in dist.items()}
+    keys = rule.get("variations")
+    if isinstance(rule.get("variation"), str):
+        keys = [rule["variation"]]
+    if not keys:
+        die(f"rule {rule.get('key')!r} needs `distribution`, `variation`, or `variations`.")
+    n = len(keys)
+    base = 10000 // n
+    out = {}
+    for i, vk in enumerate(keys):
+        out[vk] = {"key": vk, "percentage_included": base if i < n - 1 else 10000 - base * (n - 1)}
+    return out
+
+
+def _rule_metrics(rule, event_id_by_key):
+    """Build the ruleset `metrics` list. A/B rules require >=1 metric. Each spec
+    entry is an event key string, or a dict with `event`/`event_id` plus optional
+    aggregator/winning_direction/scope (sensible defaults supplied)."""
+    out = []
+    for m in rule.get("metrics") or []:
+        if isinstance(m, str):
+            m = {"event": m}
+        eid = m.get("event_id")
+        if m.get("event"):
+            eid = event_id_by_key.get(m["event"])
+            if eid is None:
+                die(f"metric event {m['event']!r} not found in project. Create it "
+                    f"first (events step). Known: {sorted(event_id_by_key)}")
+        if eid is None:
+            die(f"rule {rule.get('key')!r} metric needs `event` or `event_id`.")
+        out.append({
+            "event_id": int(eid),
+            "aggregator": m.get("aggregator", "unique"),
+            "winning_direction": m.get("winning_direction", "increasing"),
+            "scope": m.get("scope", "visitor"),
+        })
+    return out
+
+
+def _audience_conditions(rule, aud_id_by_name):
+    """Resolve a rule's targeting into a ruleset audience_conditions value.
+    Everyone -> [] (empty conditions); a named/id'd audience -> the nested
+    ["and", ["or", {"audience_id": <int id>}]] the ruleset expects."""
+    if rule.get("audience_conditions") is not None:
+        return rule["audience_conditions"]  # raw passthrough
+    aid = rule.get("audience_id")
+    if rule.get("audience"):
+        aid = aud_id_by_name.get(rule["audience"])
+        if aid is None:
+            die(f"no audience named {rule['audience']!r} in this project. "
+                f"Create it first (audiences step). Known: {sorted(aud_id_by_name)}")
+    if aid is None:
+        return []
+    # audience_id MUST be an integer here — passing it as a string trips a
+    # misleading "audience_id values from other projects" validation error.
+    return ["and", ["or", {"audience_id": int(aid)}]]
+
+
+def cmd_rules(args):
+    token = load_token()
+    pid = args.project
+    flag = args.flag
+    env = args.env_key
+
+    aud_id_by_name = {a.get("name"): a.get("id")
+                      for a in api_list(f"/v2/audiences?project_id={pid}", token)}
+    event_id_by_key = {e.get("key"): e.get("id")
+                       for e in api_list(f"/v2/events?project_id={pid}", token)
+                       if isinstance(e, dict)}
+
+    # Current ruleset — so we append to (not clobber) any existing rules.
+    _, ruleset = api("GET",
+                     f"/flags/v1/projects/{pid}/flags/{flag}/environments/{env}/ruleset",
+                     token, allow=(404,))
+    existing_order = list(ruleset.get("rule_priorities") or []) if isinstance(ruleset, dict) else []
+    existing_rules = set((ruleset.get("rules") or {}).keys()) if isinstance(ruleset, dict) else set()
+
+    patch, results, spec_keys = [], [], []
+    for rule in as_list(load_spec(args)):
+        rkey = rule["key"]
+        rule_obj = {
+            "key": rkey,
+            "name": rule.get("name", rkey),
+            "type": rule.get("type", "a/b"),
+            "enabled": rule.get("enabled", True),
+            # Default to "running" so the rule serves live (a demo wants to see
+            # variations immediately). The API also forbids demoting a running
+            # rule back to draft on `replace`, so being explicit keeps re-runs safe.
+            "status": rule.get("status", "running"),
+            "percentage_included": int(rule.get("percentage_included", 10000)),
+            "audience_conditions": _audience_conditions(rule, aud_id_by_name),
+            "variations": _rule_variations(rule),
+        }
+        metrics = _rule_metrics(rule, event_id_by_key)
+        if metrics:
+            rule_obj["metrics"] = metrics
+        # This API rejects `add` on an existing path, so use `replace` for a rule
+        # that already exists (idempotent re-run) and `add` for a brand-new one.
+        op = "replace" if rkey in existing_rules else "add"
+        patch.append({"op": op, "path": f"/rules/{rkey}", "value": rule_obj})
+        spec_keys.append(rkey)
+        results.append({"key": rkey, "type": rule_obj["type"],
+                        "variations": list(rule_obj["variations"]),
+                        "metrics": [m["event_id"] for m in metrics]})
+
+    # Spec order is the priority order (first = evaluated first); any pre-existing
+    # rules not in this spec keep their relative order behind them.
+    order = spec_keys + [k for k in existing_order if k not in spec_keys]
+    patch.append({"op": "replace", "path": "/rule_priorities", "value": order})
+    # A flag is disabled per-environment by default, and while disabled NONE of
+    # its rules compile into the datafile (only the off rollout serves). Enabling
+    # the environment is what makes the variations actually serve, so do it here
+    # unless the caller wants the OFF-by-default live-toggle starting point.
+    if not args.no_enable:
+        patch.insert(0, {"op": "replace", "path": "/enabled", "value": True})
+    status, resp = api("PATCH",
+                       f"/flags/v1/projects/{pid}/flags/{flag}/environments/{env}/ruleset",
+                       token, patch, allow=(400, 409))
+    if status == 400:
+        die(f"ruleset patch for {flag!r} rejected: {resp}")
+    print(json.dumps({"flag": flag, "env": env, "status": status,
+                      "rule_priorities": order, "rules": results}, indent=2))
+
+
+# --------------------------------------------------------------------------- #
 # enable-flag  (turn a flag ON at 100% via JSON Patch)
 # --------------------------------------------------------------------------- #
 def cmd_enable_flag(args):
@@ -456,6 +681,16 @@ def main():
     pau.add_argument("--dry-run", action="store_true",
                      help="Print the resolved conditions without creating anything")
     pau.set_defaults(func=cmd_audiences)
+
+    pr = sub.add_parser("rules", help="Add targeting rules that serve specific variations")
+    spec_args(pr)
+    pr.add_argument("--flag", required=True, help="Flag key to add the rule(s) to")
+    pr.add_argument("--env-key", default="development",
+                    help="Environment key (default: development)")
+    pr.add_argument("--no-enable", action="store_true",
+                    help="Leave the flag OFF in this environment (rules won't serve "
+                         "until toggled on in the UI). Default: enable so rules serve.")
+    pr.set_defaults(func=cmd_rules)
 
     pen = sub.add_parser("enable-flag", help="Turn a flag ON at 100%% in an environment")
     pen.add_argument("--project", required=True)

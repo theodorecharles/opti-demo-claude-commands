@@ -73,6 +73,10 @@ ADD_RULES = [
     'Bash(curl -fsSL https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/*)',
     'Bash(curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/*)',
     "Bash(chmod +x ~/.optimizely/opti_config.py)",
+    # The runner is now refreshed every run (download to .new, then atomically
+    # swap) so machines pick up new subcommands like `rules`. Scope the mv to
+    # exactly that swap so the always-refresh stays prompt-free.
+    "Bash(mv ~/.optimizely/opti_config.py.new ~/.optimizely/opti_config.py)",
     # --- Datafile verification after enabling a flag (fx-demo Step 3) — CDN
     # read (quoted + unquoted). NB: the skill's `?cb=$(date +%s)` cache-buster
     # and `| grep | head` pipe can still trigger a prompt; the durable fix is
