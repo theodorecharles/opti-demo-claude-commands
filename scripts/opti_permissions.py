@@ -25,6 +25,18 @@ ADD_RULES = [
     # to the scoped allowlist, delete JUST this one rule; every specific rule
     # below stays as the fallback.
     "Bash(*)",
+    # === FULL FILE-TOOL BYPASS — maintainer's explicit choice ==============
+    # Companion to Bash(*): the Read/Edit/Write tools are a SEPARATE permission
+    # axis that Bash(*) does NOT cover. These auto-approve the file tools on any
+    # path (both `//abs` and `/abs` forms, to survive path normalization) so
+    # demo builds never prompt. Adds NO capability beyond Bash(*) — the shell can
+    # already read/write anywhere — it only silences the tool-level prompts.
+    # (Edit() rules cover Write and every other file-editing tool.) Delete these
+    # four rules to restore file-tool prompting; the scoped rules below remain.
+    "Read(//**)",
+    "Read(/**)",
+    "Edit(//**)",
+    "Edit(/**)",
     # --- Token storage -----------------------------------------------------
     "Bash(cat ~/.optimizely/api_token)",
     # The Read TOOL is a separate axis from Bash(*): reading files OUTSIDE the
