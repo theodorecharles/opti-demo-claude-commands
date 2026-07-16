@@ -101,6 +101,17 @@ Build a static or simple web app that looks like the prospect's real site. Key g
 - Use Next.js or Vite only if the user requests a framework
 - For static sites, use `npx serve .` or `python3 -m http.server` to serve locally
 
+### Optimizely Slides deck (only if this demo is a React/Next app)
+The interactive product deck is a **React/Next** package, so it can only be built
+in when the demo itself is a Next.js app (i.e. the user asked for a framework
+above). In that case, fold it into the build the same way the `/fx-demo` Web
+track does — copy `~/.optimizely/slides/package` in (`optimizely-slides/` under
+the src root, `app/slides` under the app dir, assets into `public/`), add
+`@import "../optimizely-slides/slides.css";` after `@import "tailwindcss";`, and
+tailor `slides.config.ts` (set `wxSnippetId` to this project's snippet/PROJECT_ID
+and `brand` to the prospect). For a **default static-HTML** WX site there's no
+React host, so skip the deck — don't try to bolt it onto a plain snippet site.
+
 ### Optimizely snippet placement
 - Insert the Optimizely `<script>` tag as the **very first script** in the `<head>` tag, before any other scripts or stylesheets
 - This ensures Optimizely loads synchronously and can modify the page before it renders (preventing flicker)

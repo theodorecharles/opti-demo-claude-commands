@@ -248,6 +248,49 @@ The package that installs today is **`@optimizely/react-sdk@4.x`** (built on `op
 - The Optimizely client (polling config manager + event processor) and `localStorage` must run **browser-only**. Gate the interactive tree behind a `mounted` check (render a splash on the server / first paint), and create the client **lazily** — a `typeof window` guard or a `useState`/singleton inside the client boundary.
 - If you persist cart/state to `localStorage`, **don't let the persist effect write before the hydrate effect commits** — otherwise the initial empty state clobbers saved data on refresh (React StrictMode double-invoking effects in dev makes this worse). Gate persistence on a `hydrated` flag that you set at the **end** of the hydrate effect.
 
+#### Add the Optimizely Slides deck (during the build — Web track only):
+
+The interactive product deck ships **with** the app — build it in now, as part of
+this step, not as a bolted-on afterthought. It's a React/Next package, so it only
+applies to this Web track (skip it for the iOS track above). You already have
+everything needed to tailor it: **SDK_KEY**, **PROJECT_ID**, the flags/events you
+created, and the prospect's brand. The package is cached locally by the installer
+at `~/.optimizely/slides/package` (`PKG` below); `/add-slides` remains available
+to re-sync a demo to a newer baseline later.
+
+1. Copy the payload in (this scaffold uses `--src-dir`, so `SRC_ROOT=src` and
+   `APP_DIR=src/app`):
+   ```bash
+   PKG=~/.optimizely/slides/package
+   cp -R "$PKG/optimizely-slides" src/optimizely-slides
+   cp -R "$PKG/app/slides"        src/app/slides
+   mkdir -p public && cp "$PKG/assets/optimizely-logo.svg" "$PKG/assets/opal-orb.png" public/
+   ```
+2. Wire the deck stylesheet — add its import to `src/app/globals.css` **right
+   after** `@import "tailwindcss";` (the relative path is correct because
+   `globals.css` sits in `app/` and `optimizely-slides/` is its sibling under
+   `src/`):
+   ```css
+   @import "tailwindcss";
+   @import "../optimizely-slides/slides.css";
+   ```
+   The SDK dependency (`@optimizely/react-sdk`) is already installed from the
+   steps above, and the deck reuses your `<OptimizelyProvider>` if present or
+   creates its own from `sdkKey` — no extra wiring needed.
+3. **Tailor `src/optimizely-slides/slides.config.ts` to THIS demo** (this is the
+   step that makes it feel bespoke rather than a generic deck): set `sdkKey` to
+   **SDK_KEY**, `flagKey` to the primary hero/homepage flag, `homeHref` to `/`,
+   and `deckPath` to `/slides`. Fill `brand` (name, logoText, accent hex, heroBg,
+   siteHost, nav, features, catalog) from the prospect and the app you just
+   built, and mirror the real hero flag's variations into `heroVariations` (the
+   first entry is the control) so the "read variables" slide and live preview
+   match the actual experiment. Set `benchAttributes` to representative user
+   attributes. Trim any track/slide that isn't relevant to this prospect.
+
+The deck then builds and serves with the app in the next step — `/slides` (deck)
+and `/slides/adobe-comparison` (Adobe Target → Optimizely concept map) become
+routes of the demo itself.
+
 ## Step 7: Build and Run
 
 ### iOS:
@@ -267,7 +310,7 @@ npm run dev
 
 ## Step 8: Verify
 
-Take a screenshot of the running app and show it to the user. Confirm all feature flags are working and events are being tracked.
+Take a screenshot of the running app and show it to the user. Confirm all feature flags are working and events are being tracked. For the Web track, also confirm `/slides` and `/slides/adobe-comparison` appear in the route list and the deck loads (screenshot `http://localhost:3000/slides`).
 
 ## Key Principles for Demo Apps
 
@@ -289,3 +332,4 @@ After completing all steps, summarize:
 5. All events created
 6. Audiences created
 7. App location and how to run it
+8. (Web track) The Optimizely Slides deck at `/slides`, and what you tailored in `slides.config.ts`

@@ -91,6 +91,11 @@ ADD_RULES = [
     "Bash(grep *)",
     "Bash(head *)",
     "Bash(tail *)",
+    # File ops for copying the slides deck into the app during the build
+    # (cp -R the package, mkdir the target dirs). Not `rm` — a re-sync's
+    # rm -rf stays behind a prompt on purpose.
+    "Bash(cp *)",
+    "Bash(mkdir *)",
 ]
 
 # Rules added by earlier install.sh versions that are obsolete now.
