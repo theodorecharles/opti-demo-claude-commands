@@ -1,20 +1,22 @@
 # Uninstall Optimizely Demo Commands
 
-Remove all Optimizely demo commands, the stored API token, the fake-data runner script, and the permission rules from Claude settings.
+Remove all Optimizely demo commands, the stored API token, the fake-data runner script, the cached Optimizely Slides package, and the permission rules from Claude settings.
 
 Run the following steps:
 
 ## Step 1: Remove command files
 
 ```bash
-rm -f ~/.claude/commands/fx-demo.md ~/.claude/commands/wx-demo.md ~/.claude/commands/fake-data.md ~/.claude/commands/update-demo-commands.md ~/.claude/commands/uninstall-demo-commands.md
+rm -f ~/.claude/commands/fx-demo.md ~/.claude/commands/wx-demo.md ~/.claude/commands/add-slides.md ~/.claude/commands/fake-data.md ~/.claude/commands/update-demo-commands.md ~/.claude/commands/uninstall-demo-commands.md
 ```
 
-## Step 2: Remove the API token and the fake-data runner
+## Step 2: Remove the API token, the fake-data runner, and the slides cache
 
 ```bash
-rm -f ~/.optimizely/api_token ~/.optimizely/fake_data.py && rmdir ~/.optimizely 2>/dev/null; true
+rm -f ~/.optimizely/api_token ~/.optimizely/fake_data.py ~/.optimizely/opti_config.py && rm -rf ~/.optimizely/slides && rmdir ~/.optimizely 2>/dev/null; true
 ```
+
+Note: this removes the local slides *cache* only. Demos that already have the deck copied in keep their copy — delete `optimizely-slides/` and `app/slides/` in a demo to remove it there.
 
 ## Step 3: Remove permission rules from Claude settings
 
@@ -42,6 +44,12 @@ prefixes = [
     'Bash(curl -fsSL https://api.optimizely.com/v2/',
     # /fake-data runner (current location)
     'Bash(python3 ~/.optimizely/fake_data.py',
+    # /fx-demo + /wx-demo project-config runner
+    'Bash(python3 ~/.optimizely/opti_config.py',
+    # /add-slides — package cache refresh + reads
+    'Bash(curl -fsSL https://github.com/theodorecharles/opti-demo-claude-commands/',
+    'Bash(cat ~/.optimizely/slides/VERSION)',
+    'Read(~/.optimizely/slides/',
     # Obsolete /fake-data rules from earlier versions (kept for cleanup on
     # uninstall when the user upgraded through one of those versions)
     'Write(/tmp/opti_fake_data.py)',
@@ -73,4 +81,4 @@ with open(settings_file, 'w') as f:
 PYEOF
 ```
 
-After all steps succeed, tell the user: **"Optimizely demo commands have been uninstalled. Commands, API token, runner script, and permissions have all been removed."**
+After all steps succeed, tell the user: **"Optimizely demo commands have been uninstalled. Commands, API token, runner script, slides cache, and permissions have all been removed."**

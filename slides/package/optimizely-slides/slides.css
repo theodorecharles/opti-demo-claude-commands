@@ -1,0 +1,45 @@
+/* ===========================================================================
+   Optimizely Slides — self-contained theme tokens + animations.
+
+   Import this ONCE from your app's global stylesheet, AFTER Tailwind:
+
+     @import "tailwindcss";
+     @import "../optimizely-slides/slides.css";   // adjust the relative path
+
+   This registers the Optimizely "Free to Grow" palette as Tailwind v4 theme
+   tokens (so `bg-opti-fir`, `text-opti-lime`, … utilities are generated) and
+   ships the deck's fade-in animation + scrollbar helper. Nothing here depends
+   on the host app's own theme, so the deck styles correctly wherever it lands.
+   =========================================================================== */
+
+@theme {
+  --color-opti-fir: #08251a;
+  --color-opti-midfir: #0d3a29;
+  --color-opti-lime: #abff44;
+  --color-opti-cream: #eff6e9;
+  --color-opti-sage: #d8e4cb;
+}
+
+@keyframes opti-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.opti-fade-in {
+  animation: opti-fade-in 0.35s ease both;
+}
+
+/* Hide scrollbars on horizontal scrollers (used by the comparison nav). */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

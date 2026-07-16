@@ -26,6 +26,7 @@ DEST_DIR="$HOME/.claude/commands"
 TOKEN_DIR="$HOME/.optimizely"
 TOKEN_FILE="$TOKEN_DIR/api_token"
 RUNNER_FILE="$TOKEN_DIR/fake_data.py"
+CONFIG_FILE="$TOKEN_DIR/opti_config.py"
 
 echo "==> Installing Optimizely Claude commands from branch: $BRANCH"
 
@@ -40,6 +41,8 @@ echo "    Downloading wx-demo.md..."
 curl -fsSL "$REPO_URL/wx-demo.md" -o "$DEST_DIR/wx-demo.md"
 echo "    Downloading fake-data.md..."
 curl -fsSL "$REPO_URL/fake-data.md" -o "$DEST_DIR/fake-data.md"
+echo "    Downloading add-slides.md..."
+curl -fsSL "$REPO_URL/add-slides.md" -o "$DEST_DIR/add-slides.md"
 echo "    Downloading update-demo-commands.md..."
 curl -fsSL "$REPO_URL/update-demo-commands.md" -o "$DEST_DIR/update-demo-commands.md"
 echo "    Downloading uninstall-demo-commands.md..."
@@ -52,6 +55,26 @@ echo "    Downloading fake_data.py runner..."
 curl -fsSL "$SCRIPTS_URL/opti_fake_data.py" -o "$RUNNER_FILE"
 chmod +x "$RUNNER_FILE"
 echo "==> Runner installed to $RUNNER_FILE"
+
+# Download the project-configuration runner (used by /fx-demo and /wx-demo to
+# provision projects, attributes, flags, events, and audiences).
+echo "    Downloading opti_config.py runner..."
+curl -fsSL "$SCRIPTS_URL/opti_config.py" -o "$CONFIG_FILE"
+chmod +x "$CONFIG_FILE"
+echo "==> Runner installed to $CONFIG_FILE"
+
+# Cache the Optimizely Slides package (the interactive deck /add-slides drops
+# into a demo). Pulled as a one-shot tarball of the repo's slides/ folder.
+SLIDES_DIR="$TOKEN_DIR/slides"
+TOPDIR="opti-demo-claude-commands-${BRANCH//\//-}"
+echo "    Downloading Optimizely Slides package..."
+mkdir -p "$SLIDES_DIR"
+if curl -fsSL "https://github.com/theodorecharles/opti-demo-claude-commands/archive/refs/heads/${BRANCH}.tar.gz" \
+     | tar -xz -C "$SLIDES_DIR" --strip-components=2 "${TOPDIR}/slides" 2>/dev/null; then
+    echo "==> Slides package cached at $SLIDES_DIR (v$(cat "$SLIDES_DIR/VERSION" 2>/dev/null || echo '?'))"
+else
+    echo "    (Slides download skipped — /add-slides will fetch it on first run)"
+fi
 
 # Configure Claude permissions: add the rules our commands need, and purge
 # rules from older /fake-data versions that are no longer needed (the runner
@@ -78,6 +101,13 @@ add_rules = [
     'Bash(curl -fsSL https://api.optimizely.com/v2/*)',
     # /fake-data runner — one rule covers `info` and `send` plus any flags.
     "Bash(python3 ~/.optimizely/fake_data.py *)",
+    # /fx-demo + /wx-demo project-config runner — covers every subcommand.
+    "Bash(python3 ~/.optimizely/opti_config.py *)",
+    # /add-slides — refresh the cached slides package + read it.
+    "Bash(curl -fsSL https://github.com/theodorecharles/opti-demo-claude-commands/*)",
+    "Bash(mkdir -p ~/.optimizely/slides*)",
+    "Bash(cat ~/.optimizely/slides/VERSION)",
+    "Read(~/.optimizely/slides/**)",
 ]
 
 # Rules added by earlier install.sh versions that are obsolete now.
@@ -136,6 +166,7 @@ echo ""
 echo "Done! Available commands:"
 echo "  /fx-demo                    — Build a Feature Experimentation demo"
 echo "  /wx-demo                    — Build a Web Experimentation demo"
+echo "  /add-slides                 — Add the interactive Optimizely deck to a demo"
 echo "  /fake-data                  — Populate an experiment's Results page with fake data"
 echo "  /update-demo-commands       — Update all commands to the latest version"
 echo "  /uninstall-demo-commands    — Remove commands, token, and permissions"

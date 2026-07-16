@@ -1,3 +1,9 @@
+---
+description: Build an Optimizely Feature Experimentation demo (iOS SwiftUI or Web React/Next.js) end-to-end — project, flags, events, audiences, and the app.
+model: claude-opus-4-8
+effort: xhigh
+---
+
 # Optimizely Feature Experimentation Demo Builder
 
 You are building an Optimizely Feature Experimentation demo app for a prospect. The user is a Solution Engineer at Optimizely. This skill automates the full end-to-end workflow: creating the Optimizely FX project, retrieving the SDK key, creating feature flags/events/attributes/audiences, building the demo app, and running it.
@@ -18,6 +24,16 @@ cat ~/.optimizely/api_token
     ```
   - Then proceed with that token.
 
+Also make sure the project-config runner is present (it does all the Optimizely
+API work in this skill). If `~/.optimizely/opti_config.py` is missing, download it:
+
+```bash
+[ -f ~/.optimizely/opti_config.py ] || (mkdir -p ~/.optimizely && curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/scripts/opti_config.py" -o ~/.optimizely/opti_config.py && chmod +x ~/.optimizely/opti_config.py)
+```
+
+The runner reads the token from `~/.optimizely/api_token` itself, so you don't
+pass it on the command line.
+
 ## Arguments
 
 The user will provide:
@@ -29,140 +45,117 @@ The user will provide:
 
 If any of these are missing, ask before proceeding.
 
-## Optimizely API Configuration
+## Optimizely configuration (via `opti_config.py`)
 
-- **Base URL**: `https://api.optimizely.com`
-- **Auth Header**: `Authorization: Bearer <TOKEN>` (where `<TOKEN>` is loaded from Step 0)
+All Optimizely-side setup runs through the project-config runner
+(`~/.optimizely/opti_config.py`) rather than hand-written curl — it's faster and
+encodes the tricky parts correctly (the `is_flags_enabled` project flag, prod
+unrestriction, and — importantly — audience attribute-name resolution). Every
+subcommand reads the token from `~/.optimizely/api_token` and prints JSON. The
+bulk subcommands take a spec via `--spec FILE` or `--json '<inline>'` and skip
+entities that already exist, so re-runs are safe. Read each command's JSON
+output before moving on.
 
-**Shell note**: The default shell here is **zsh**, which (unlike bash) does **not** word-split unquoted parameter expansions. Any `for x in $var` loop over a space-separated string will iterate **once** over the whole string, not per word. In scripts you write (e.g. loops over flag keys, the `create-audiences.sh` below), use an explicit list (`for x in a b c`), an array (`arr=(...)`; `for x in "${arr[@]}"`), or zsh's split form `${=var}`.
+## Step 1: Create the project (+ SDK keys)
 
-## Step 1: Create the Optimizely FX Project
-
-**CRITICAL**: You MUST include `"is_flags_enabled": true` in the request body. Without this, the API creates a legacy FullStack project (sunset) that does NOT support the flags v1 API. Only `is_flags_enabled: true` creates a proper Feature Experimentation project. **Do NOT omit this field under any circumstances.**
-
-Also: name the project after the **app name**, not the prospect name — the demo may be reused across prospects.
-
-```bash
-curl -s -X POST "https://api.optimizely.com/v2/projects" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "<APP_NAME>", "description": "FX demo for <PROSPECT_NAME>", "platform": "custom", "is_flags_enabled": true}'
-```
-
-Save the `id` from the response as `PROJECT_ID`. **Verify** that `"is_flags_enabled": true` appears in the response before proceeding.
-
-After creating the project, unrestrict the production environment so the flags API has permission to create flags:
+Name the project after the **app name**, not the prospect — the demo may be
+reused across prospects.
 
 ```bash
-# Get environment IDs
-curl -s "https://api.optimizely.com/v2/environments?project_id=<PROJECT_ID>" \
-  -H "Authorization: Bearer <TOKEN>"
-
-# Unrestrict production (development is already unrestricted by default)
-curl -s -X PATCH "https://api.optimizely.com/v2/environments/<PROD_ENV_ID>" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"has_restricted_permissions": false}'
+python3 ~/.optimizely/opti_config.py project --name "<APP_NAME>" --platform custom --description "FX demo for <PROSPECT_NAME>"
 ```
 
-## Step 2: Get the Development Environment SDK Key
+This creates a proper Feature Experimentation project (with
+`is_flags_enabled: true` — without it you'd get a legacy FullStack project that
+has no flags v1 API), unrestricts the production environment, and returns the
+project id plus dev/prod SDK keys. From the JSON output, save:
+- `project_id` → **PROJECT_ID**
+- `dev_sdk_key` → **SDK_KEY** (the app uses the development environment)
+
+## Step 2: Create user attributes
 
 ```bash
-# List environments to get the development env ID
-curl -s "https://api.optimizely.com/v2/environments?project_id=<PROJECT_ID>" \
-  -H "Authorization: Bearer <TOKEN>"
+python3 ~/.optimizely/opti_config.py attributes --project <PROJECT_ID> --json '[
+  {"key": "loyalty_tier", "name": "Loyalty Tier", "description": "Membership tier"},
+  {"key": "device_type",  "name": "Device Type",  "description": "Device category"}
+]'
 ```
 
-Find the environment with `"is_primary": false` (development). Save its `id` as `DEV_ENV_ID`.
+Attributes are available in the SDK datafile for targeting immediately. **Give
+each attribute a human-readable `name`** (e.g. key `loyalty_tier` → name
+`Loyalty Tier`). Audiences (Step 5) reference attributes by that display name —
+the runner maps key → display name for you, which is the whole reason audience
+creation is now reliable (see Step 5).
+
+## Step 3: Create feature flags
 
 ```bash
-# Get SDK key from environment detail
-curl -s "https://api.optimizely.com/v2/environments/<DEV_ENV_ID>" \
-  -H "Authorization: Bearer <TOKEN>"
+python3 ~/.optimizely/opti_config.py flags --project <PROJECT_ID> --json '[
+  {"key": "homepage_hero", "name": "Homepage Hero", "description": "Hero A/B test",
+   "variable_definitions": {
+     "headline":  {"type": "string", "default_value": "The default headline", "description": "Hero headline"},
+     "bg_color":  {"type": "string", "default_value": "#000000", "description": "Hero background"},
+     "cta_label": {"type": "string", "default_value": "Shop now", "description": "CTA text"}
+   }}
+]'
 ```
 
-The SDK key is at `response.datafile.sdk_key`. Save this as `SDK_KEY`.
+`type` is one of `string|boolean|integer|double|json`. The runner fills in each
+variable's required `key` for you.
 
-## Step 3: Create User Attributes (EARLY — before flags, to start propagation)
+**Flags ship OFF by default** (`decide()` returns `enabled: false`, serving the
+auto-created `off` variation) — this is the right **live-toggle** starting point:
+the SE flips the flag on in the Optimizely UI during the demo and the app reacts
+within ~2s. That's the default the rest of this skill assumes.
 
-**IMPORTANT**: Create attributes as early as possible. There is a propagation delay (potentially minutes to hours) before the audience conditions API recognizes newly-created attributes. Creating them first gives them maximum time to propagate while you build the rest.
+To instead serve a flag **ON at 100%** immediately (so the demo works out of the
+box / can be screenshot-verified), add an everyone-delivery rule:
 
 ```bash
-curl -s -X POST "https://api.optimizely.com/v2/attributes" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project_id": <PROJECT_ID>,
-    "key": "<attribute_key>",
-    "name": "<Attribute Name>",
-    "description": "<description>"
-  }'
+python3 ~/.optimizely/opti_config.py enable-flag --project <PROJECT_ID> --flag <FLAG_KEY> --env-key development
 ```
 
-Attributes are immediately available in the SDK datafile for targeting. The app can send and receive them right away. Only the audience conditions REST API has the propagation delay.
-
-## Step 4: Create Feature Flags
-
-For each feature flag the user wants:
+Then confirm the datafile flipped (allow a few seconds for the CDN):
 
 ```bash
-curl -s -X POST "https://api.optimizely.com/flags/v1/projects/<PROJECT_ID>/flags" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "key": "<flag_key>",
-    "name": "<Flag Name>",
-    "description": "<description>",
-    "variable_definitions": {
-      "<var_key>": {
-        "key": "<var_key>",
-        "type": "<string|boolean|integer|double|json>",
-        "default_value": "<default>",
-        "description": "<var description>"
-      }
-    }
-  }'
+curl -s "https://cdn.optimizely.com/datafiles/<SDK_KEY>.json?cb=$(date +%s)" | grep -o '"featureEnabled":[a-z]*' | head
 ```
 
-**Important**: Every variable in `variable_definitions` MUST include a `"key"` field matching its dictionary key.
-
-### (Optional) Enable a flag at 100% via the API
-
-By default a newly-created flag ships **OFF**: `decide()` returns `enabled: false` and only the auto-created `off` variation serves at 100%. That's a perfectly good **live-toggle** starting point — the SE flips the flag on in the Optimizely UI during the demo and the app reacts within ~2s (this is the default the rest of this skill assumes).
-
-If you instead want the flag serving **on** at 100% immediately (so the demo works out of the box / can be screenshot-verified), add a delivery rule with a **JSON Patch**. Verified facts about this API:
-
-- The `on` and `off` variations are **auto-created** with the flag — POSTing an `on` variation returns `409 already exists`.
-- There is **no** `POST .../rules` endpoint (it 404s), and `/ruleset/enabled` is `405`. You enable + add a delivery rule by PATCHing the **ruleset base URL** with a JSON Patch **array** body. Use the environment **key** (e.g. `development`) — matching the environment whose SDK key the app uses — not the numeric env ID:
+## Step 4: Create custom events
 
 ```bash
-curl -s -X PATCH \
-  "https://api.optimizely.com/flags/v1/projects/<PROJECT_ID>/flags/<FLAG_KEY>/environments/<ENV_KEY>/ruleset" \
-  -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" \
-  -d '[
-    {"op":"add","path":"/rules/everyone","value":{
-      "key":"everyone","name":"Everyone","type":"targeted_delivery",
-      "audience_conditions":[],"percentage_included":10000,"enabled":true,
-      "variations":{"on":{"key":"on","percentage_included":10000}}
-    }},
-    {"op":"replace","path":"/rule_priorities","value":["everyone"]}
-  ]'
+python3 ~/.optimizely/opti_config.py events --project <PROJECT_ID> --json '[
+  {"key": "add_to_cart", "name": "Add To Cart"},
+  {"key": "purchase_completed", "name": "Purchase Completed"}
+]'
 ```
 
-Then verify the CDN datafile flips to serving the `on` variation (`featureEnabled: true`). Add a cache-buster query param and allow a few seconds for the CDN to refresh:
+## Step 5: Create audiences
+
+Audiences target on the attributes from Step 2. Reference each attribute by its
+**key** — the runner resolves it to the attribute's display name, which is what
+the audiences API actually validates against.
 
 ```bash
-curl -s "https://cdn.optimizely.com/datafiles/<SDK_KEY>.json?cb=$(date +%s)"
+python3 ~/.optimizely/opti_config.py audiences --project <PROJECT_ID> --json '[
+  {"name": "Gold Loyalty Tier", "attribute": "loyalty_tier", "value": "gold"},
+  {"name": "Mobile Users",      "attribute": "device_type",  "value": "mobile"},
+  {"name": "Gold on Mobile",    "all": [
+     {"attribute": "loyalty_tier", "value": "gold"},
+     {"attribute": "device_type",  "value": "mobile"}]}
+]'
 ```
 
-## Step 5: Create Custom Events
-
-```bash
-curl -s -X POST "https://api.optimizely.com/v2/projects/<PROJECT_ID>/custom_events" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"key": "<event_key>", "name": "<Event Name>", "description": "<description>", "event_type": "custom"}'
-```
+**There is no propagation delay to design around.** The old belief that
+newly-created attributes take "minutes to hours" before audiences accept them
+was a misdiagnosis. The real cause: the `/v2/audiences` API validates a
+`custom_attribute` condition's `name` against the attribute's **display name**
+(e.g. `Loyalty Tier`), not its key (`loyalty_tier`). Sending the key yields
+`Custom attribute 'loyalty_tier' does not exist` — no amount of retrying fixes
+it. The runner GETs the project's attributes and rewrites each condition to use
+the correct display name, so audiences create on the first try. (Use
+`--dry-run` to print the exact conditions without creating anything.) If you
+ever do hit a genuine transient, just re-run — existing audiences are skipped.
 
 ## Step 6: Build the Demo App
 
@@ -170,7 +163,7 @@ curl -s -X POST "https://api.optimizely.com/v2/projects/<PROJECT_ID>/custom_even
 
 1. Create a new Xcode project using xcodegen (check `which xcodegen` first, install with `brew install xcodegen` if needed)
 2. Add Optimizely Swift SDK dependency: `https://github.com/optimizely/swift-sdk.git` (product name: `Optimizely`, from version 4.0.0)
-3. Use the `SDK_KEY` from Step 2 in the OptimizelyManager
+3. Use the `SDK_KEY` from Step 1 in the OptimizelyManager
 4. Set `periodicDownloadInterval: 2` for live demo polling
 5. Use `@Published` properties + `addDatafileChangeNotificationListener` to auto-update UI
 6. For feature decisions, use the Decide API:
@@ -272,38 +265,7 @@ xcrun simctl launch "iPhone 17 Pro" <bundle_id>
 npm run dev
 ```
 
-## Step 8: Create Audiences (LAST — after build, to allow propagation time)
-
-Attempt to create audiences referencing the attributes from Step 3. The audience conditions format is:
-
-```bash
-curl -s -X POST "https://api.optimizely.com/v2/audiences" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project_id": <PROJECT_ID>,
-    "name": "<Audience Name>",
-    "description": "<description>",
-    "conditions": "[\"and\", [\"or\", [\"or\", {\"match_type\": \"exact\", \"name\": \"<attribute_key>\", \"type\": \"custom_attribute\", \"value\": <value>}]]]"
-  }'
-```
-
-### Audience conditions format notes:
-- `conditions` must be a **stringified JSON array** (escaped JSON inside a string). Passing a raw array returns `400 ... is not of type 'string'`.
-- Structure: `["and", ["or", ["or", {condition}]]]` (nested and/or/or)
-- Each condition: `{"match_type": "exact", "name": "<attr_key>", "type": "custom_attribute", "value": <val>}`
-- Valid match_type values: `"exact"`, `"exists"`, `"substring"`, `"gt"`, `"lt"`
-- Boolean values: `true` / `false` (not strings)
-- String values: `"some_string"`
-
-### Handling propagation delay:
-- If audience creation fails with `Custom attribute '<key>' does not exist`, the audience-conditions validator hasn't caught up yet. **Do NOT promise success after a few retries.** In practice the attributes were present in `/v2/attributes` **and** in the live datafile, yet `/v2/audiences` still rejected them well past 3×30s — its validator keeps a separate cache that can lag **minutes to hours**.
-- A couple of quick retries (e.g. 2×30s) is fine to catch the fast case, but don't block the demo waiting on it.
-- Instead, **ship a re-runnable `create-audiences.sh` script** (the curl call above, parameterized over the audiences you want) that the SE can run later once the cache catches up. (Mind the zsh **Shell note** above if the script loops over attribute/audience lists.)
-- Tell the SE the **Optimizely UI** audience builder does **not** have this lag — building the audience in the UI works immediately. That's the fastest path if they need it during the demo.
-- Either way, the SDK/app targeting works regardless, because the attributes are already in the datafile. Audiences are only needed for the Optimizely UI's rule configuration.
-
-## Step 9: Verify
+## Step 8: Verify
 
 Take a screenshot of the running app and show it to the user. Confirm all feature flags are working and events are being tracked.
 
@@ -325,5 +287,5 @@ After completing all steps, summarize:
 3. All attributes created
 4. All feature flags created with their variables
 5. All events created
-6. Audiences created (or note if they need manual creation due to propagation delay)
+6. Audiences created
 7. App location and how to run it
