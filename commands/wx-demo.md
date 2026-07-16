@@ -1,3 +1,9 @@
+---
+description: Build an Optimizely Web Experimentation demo site end-to-end — project, snippet, and a production-quality demo site.
+model: claude-opus-4-8
+effort: xhigh
+---
+
 # Optimizely Web Experimentation Demo Builder
 
 You are building an Optimizely Web Experimentation demo site for a prospect. The user is a Solution Engineer at Optimizely. This skill automates: creating the Optimizely Web project, getting the JS snippet, building a demo website, and inserting the snippet.
@@ -18,6 +24,15 @@ cat ~/.optimizely/api_token
     ```
   - Then proceed with that token.
 
+Also make sure the project-config runner is present. If
+`~/.optimizely/opti_config.py` is missing, download it:
+
+```bash
+[ -f ~/.optimizely/opti_config.py ] || (mkdir -p ~/.optimizely && curl -fsSL "https://raw.githubusercontent.com/theodorecharles/opti-demo-claude-commands/main/scripts/opti_config.py" -o ~/.optimizely/opti_config.py && chmod +x ~/.optimizely/opti_config.py)
+```
+
+The runner reads the token from `~/.optimizely/api_token` itself.
+
 ## Arguments
 
 The user will provide:
@@ -28,52 +43,53 @@ The user will provide:
 
 If the prospect name is missing, ask before proceeding.
 
-## Optimizely API Configuration
+## Optimizely configuration (via `opti_config.py`)
 
-- **Base URL**: `https://api.optimizely.com`
-- **Auth Header**: `Authorization: Bearer <TOKEN>` (where `<TOKEN>` is loaded from Step 0)
+The Optimizely-side setup runs through the project-config runner
+(`~/.optimizely/opti_config.py`), which reads the token from
+`~/.optimizely/api_token` and prints JSON. Bulk subcommands skip entities that
+already exist, so re-runs are safe.
 
 ## Step 1: Create the Optimizely Web Project
 
 ```bash
-curl -s -X POST "https://api.optimizely.com/v2/projects" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "<PROSPECT_NAME>", "platform": "web"}'
+python3 ~/.optimizely/opti_config.py project --name "<PROSPECT_NAME>" --platform web
 ```
 
-Save the `id` from the response as `PROJECT_ID`.
+From the JSON output, save `project_id` → **PROJECT_ID**. The output also
+includes `snippet_url` and a ready-to-paste `snippet_tag`:
 
-The JavaScript snippet URL is: `https://cdn.optimizely.com/js/<PROJECT_ID>.js`
-
-The `<script>` tag to insert is:
 ```html
 <script src="https://cdn.optimizely.com/js/<PROJECT_ID>.js"></script>
 ```
 
-## Step 2: Create Custom Events (if needed)
+## Step 2: Create custom events (if needed)
 
-Only create events if the user specifies them. Web Experimentation tracks clicks and pageviews via the Visual Editor, but custom events can be useful for tracking conversions.
+Only create events if the user specifies them. Web Experimentation tracks clicks
+and pageviews via the Visual Editor, but custom events are useful for tracking
+conversions.
 
 ```bash
-curl -s -X POST "https://api.optimizely.com/v2/projects/<PROJECT_ID>/custom_events" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"key": "<event_key>", "name": "<Event Name>", "description": "<description>", "event_type": "custom"}'
+python3 ~/.optimizely/opti_config.py events --project <PROJECT_ID> --json '[
+  {"key": "signup_completed", "name": "Signup Completed"}
+]'
 ```
 
-## Step 3: Create Audiences (if needed)
+## Step 3: Create audiences (if needed)
+
+Most WX audiences are built in the Visual Editor from built-in dimensions
+(device, geo, cookies, URL). If you need **custom-attribute** audiences, first
+create the attributes, then the audiences — referencing each attribute by its
+**key** (the runner resolves it to the display name the audiences API validates
+against, so there's no "attribute does not exist" error):
 
 ```bash
-curl -s -X POST "https://api.optimizely.com/v2/audiences" \
-  -H "Authorization: Bearer <TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project_id": <PROJECT_ID>,
-    "name": "<Audience Name>",
-    "description": "<description>",
-    "conditions": "[\"and\", [\"or\", [\"or\", {\"match_type\": \"exact\", \"name\": \"<attr_key>\", \"type\": \"custom_attribute\", \"value\": <value>}]]]"
-  }'
+python3 ~/.optimizely/opti_config.py attributes --project <PROJECT_ID> --json '[
+  {"key": "plan_tier", "name": "Plan Tier"}
+]'
+python3 ~/.optimizely/opti_config.py audiences --project <PROJECT_ID> --json '[
+  {"name": "Premium Plan", "attribute": "plan_tier", "value": "premium"}
+]'
 ```
 
 ## Step 4: Build the Demo Website
@@ -84,6 +100,17 @@ Build a static or simple web app that looks like the prospect's real site. Key g
 - Default to a simple static site (HTML/CSS/JS) served with a local dev server
 - Use Next.js or Vite only if the user requests a framework
 - For static sites, use `npx serve .` or `python3 -m http.server` to serve locally
+
+### Optimizely Slides deck (only if this demo is a React/Next app)
+The interactive product deck is a **React/Next** package, so it can only be built
+in when the demo itself is a Next.js app (i.e. the user asked for a framework
+above). In that case, fold it into the build the same way the `/fx-demo` Web
+track does — copy `~/.optimizely/slides/package` in (`optimizely-slides/` under
+the src root, `app/slides` under the app dir, assets into `public/`), add
+`@import "../optimizely-slides/slides.css";` after `@import "tailwindcss";`, and
+tailor `slides.config.ts` (set `wxSnippetId` to this project's snippet/PROJECT_ID
+and `brand` to the prospect). For a **default static-HTML** WX site there's no
+React host, so skip the deck — don't try to bolt it onto a plain snippet site.
 
 ### Optimizely snippet placement
 - Insert the Optimizely `<script>` tag as the **very first script** in the `<head>` tag, before any other scripts or stylesheets

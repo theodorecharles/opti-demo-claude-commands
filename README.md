@@ -10,6 +10,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/theodorecharles/opti-demo-cl
 
 The installer will:
 - Download all commands to `~/.claude/commands/`
+- Cache the Optimizely Slides package at `~/.optimizely/slides/`
 - Configure permissions so commands run without prompts
 - Optionally set up your Optimizely API token
 
@@ -19,9 +20,19 @@ The installer will:
 |---------|-------------|
 | `/fx-demo` | Build a Feature Experimentation demo (iOS SwiftUI or Web React/Next.js) |
 | `/wx-demo` | Build a Web Experimentation demo site |
+| `/add-slides` | Add (or re-sync) the interactive Optimizely product deck into a React/Next demo, tailored to the demo's context |
 | `/fake-data` | Populate an experiment's Results page with batched fake decisions and conversions |
 | `/update-demo-commands` | Update all commands to the latest version |
 | `/uninstall-demo-commands` | Remove commands, API token, and permissions |
+
+## Optimizely Slides
+
+The [`slides/`](slides/) folder is a reusable, interactive product deck (both
+Feature and Web Experimentation tracks, the Adobe Target → Optimizely concept
+map, and the live `decide()` benchmark). It's the **source of truth** — edit it
+here, push, and demos pick it up on their next `/add-slides` or
+`/update-demo-commands`. See [`slides/README.md`](slides/README.md) for the
+package layout and the `slides.config.ts` customization surface.
 
 ## API Token
 
@@ -40,6 +51,6 @@ You'll be prompted again on next use.
 Run `/uninstall-demo-commands` in Claude Code, or manually:
 
 ```bash
-rm ~/.claude/commands/fx-demo.md ~/.claude/commands/wx-demo.md ~/.claude/commands/fake-data.md ~/.claude/commands/update-demo-commands.md ~/.claude/commands/uninstall-demo-commands.md
+rm ~/.claude/commands/fx-demo.md ~/.claude/commands/wx-demo.md ~/.claude/commands/add-slides.md ~/.claude/commands/fake-data.md ~/.claude/commands/update-demo-commands.md ~/.claude/commands/uninstall-demo-commands.md
 rm -rf ~/.optimizely
 ```
