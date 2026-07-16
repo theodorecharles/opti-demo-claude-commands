@@ -22,7 +22,9 @@ ADD_RULES = [
     "Read(~/.optimizely/api_token)",
     "Bash(mkdir -p ~/.optimizely*)",
     "Bash(echo * > ~/.optimizely/api_token*)",
-    "Write(~/.optimizely/api_token)",
+    # File-permission checks only honor Edit() rules — a Write() rule is a no-op
+    # (Edit covers Write and every other file-editing tool).
+    "Edit(~/.optimizely/api_token)",
     "Bash(chmod 600 ~/.optimizely/api_token)",
     # --- Optimizely REST API reads (/fx-demo + /wx-demo; /fake-data uses its
     # own runner). Trailing `*` matches the `-H "Authorization: ..."` flag and
@@ -96,6 +98,24 @@ ADD_RULES = [
     # rm -rf stays behind a prompt on purpose.
     "Bash(cp *)",
     "Bash(mkdir *)",
+    # Read-only recon the model tends to run to orient itself at the start of a
+    # build (pwd, bare echo separators, which, read-only git subcommands, test
+    # predicates). All read-only / non-mutating — deliberately NOT `git *`
+    # (that would allow push/reset/clean without a prompt). A single un-allowed
+    # segment makes an entire `;`/`|`-joined recon command prompt, so these
+    # close the common gaps.
+    "Bash(pwd)",
+    "Bash(echo)",
+    "Bash(which *)",
+    "Bash(git status*)",
+    "Bash(git log*)",
+    "Bash(git diff*)",
+    "Bash(git branch*)",
+    "Bash(git remote*)",
+    "Bash(git rev-parse*)",
+    "Bash(git show*)",
+    "Bash(test *)",
+    "Bash([ *)",
 ]
 
 # Rules added by earlier install.sh versions that are obsolete now.
@@ -111,6 +131,9 @@ REMOVE_RULES = {
     "Bash(FD_* python3 /tmp/opti_fake_data.py)",
     "Bash(export FD_*)",
     "Bash(date *)",
+    # Dead rule from earlier versions: Write() isn't honored by file-permission
+    # checks. Replaced by Edit(~/.optimizely/api_token) in ADD_RULES.
+    "Write(~/.optimizely/api_token)",
 }
 
 
