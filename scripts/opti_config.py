@@ -14,6 +14,8 @@ Subcommands
   audiences  Bulk-create audiences — resolves attribute key -> DISPLAY NAME.
   rules      Add targeting rules (a/b split or targeted_delivery) that serve
              specific variations, optionally scoped to an audience.
+  ab-info    Resolve an a/b rule's Results-page URL + winner/loser variation ids
+             (feed straight into the fake-data runner).
   enable-flag  Turn a flag ON at 100% in an environment (JSON Patch ruleset).
 
 Each create subcommand reads a spec (a JSON array) from --spec FILE, --json
@@ -622,6 +624,79 @@ def cmd_rules(args):
 
 
 # --------------------------------------------------------------------------- #
+# ab-info  (resolve an a/b rule's results URL + suggested winner/loser)
+# --------------------------------------------------------------------------- #
+def cmd_ab_info(args):
+    """Resolve a flag's a/b rule into everything the fake-data runner needs: the
+    Results page URL and the variation ids to designate winner/loser. The flags
+    rule carries `layer_id` (campaign) and `layer_experiment_id` (experiment)
+    directly, so this works immediately — no CDN/datafile wait."""
+    token = load_token()
+    pid = args.project
+    flag = args.flag
+    env = args.env_key
+
+    _, ruleset = api("GET",
+                     f"/flags/v1/projects/{pid}/flags/{flag}/environments/{env}/ruleset",
+                     token, allow=(404,))
+    rules = (ruleset.get("rules") or {}) if isinstance(ruleset, dict) else {}
+    ab = [(k, r) for k, r in rules.items() if r.get("type") == "a/b"]
+    if args.rule:
+        ab = [(k, r) for k, r in ab if k == args.rule]
+    if not ab:
+        die(f"no a/b rule found on flag {flag!r} in env {env!r}"
+            + (f" named {args.rule!r}" if args.rule else ""))
+    rkey, rule = ab[0]
+
+    layer_id = rule.get("layer_id")
+    exp_id = rule.get("layer_experiment_id")
+    if not layer_id or not exp_id:
+        die(f"a/b rule {rkey!r} has no compiled experiment yet "
+            f"(layer_id/layer_experiment_id missing). Is the rule running?")
+
+    # variation key -> id from the flag's variations
+    _, vresp = api("GET", f"/flags/v1/projects/{pid}/flags/{flag}/variations?per_page=100",
+                   token, allow=(404,))
+    id_by_key = {v["key"]: v["id"]
+                 for v in (vresp.get("items", []) if isinstance(vresp, dict) else [])
+                 if isinstance(v, dict) and "id" in v}
+
+    # Order the rule's variations by variation id (== creation order) so
+    # "first / second / third" is stable and matches the UI.
+    ordered = sorted(
+        ({"key": k, "id": id_by_key[k]} for k in (rule.get("variations") or {}) if k in id_by_key),
+        key=lambda x: x["id"],
+    )
+    if len(ordered) < 2:
+        die(f"a/b rule {rkey!r} needs >=2 resolvable variations; got {ordered}")
+
+    keys = [v["key"] for v in ordered]
+    baseline_key = args.baseline or ("control" if "control" in keys else ordered[0]["key"])
+    if baseline_key not in keys:
+        die(f"--baseline {baseline_key!r} not among rule variations {keys}")
+    baseline = next(v for v in ordered if v["key"] == baseline_key)
+    # Winner = the first non-baseline variation.
+    winner = next(v for v in ordered if v["key"] != baseline_key)
+    # Loser = the third variation, when there are more than two (kept distinct
+    # from baseline/winner).
+    loser = None
+    if len(ordered) >= 3:
+        loser = next((v for v in ordered[2:] if v["key"] not in (baseline_key, winner["key"])), None)
+
+    print(json.dumps({
+        "flag": flag, "env": env, "rule": rkey,
+        "project_id": str(pid),
+        "campaign_id": str(layer_id),
+        "experiment_id": str(exp_id),
+        "results_url": f"https://app.optimizely.com/v2/projects/{pid}/results/{layer_id}/experiments/{exp_id}",
+        "baseline": baseline,
+        "winner": winner,
+        "loser": loser,
+        "variations": ordered,
+    }, indent=2))
+
+
+# --------------------------------------------------------------------------- #
 # enable-flag  (turn a flag ON at 100% via JSON Patch)
 # --------------------------------------------------------------------------- #
 def cmd_enable_flag(args):
@@ -691,6 +766,17 @@ def main():
                     help="Leave the flag OFF in this environment (rules won't serve "
                          "until toggled on in the UI). Default: enable so rules serve.")
     pr.set_defaults(func=cmd_rules)
+
+    pab = sub.add_parser("ab-info",
+                         help="Resolve an a/b rule's results URL + winner/loser variation ids")
+    pab.add_argument("--project", required=True, help="Project ID")
+    pab.add_argument("--flag", required=True, help="Flag key")
+    pab.add_argument("--env-key", default="production",
+                     help="Environment the a/b rule lives in (default: production)")
+    pab.add_argument("--rule", help="Specific a/b rule key (default: the first a/b rule)")
+    pab.add_argument("--baseline",
+                     help="Baseline variation key (default: 'control', else the first)")
+    pab.set_defaults(func=cmd_ab_info)
 
     pen = sub.add_parser("enable-flag", help="Turn a flag ON at 100%% in an environment")
     pen.add_argument("--project", required=True)

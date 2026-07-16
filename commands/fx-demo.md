@@ -6,7 +6,7 @@ effort: xhigh
 
 # Optimizely Feature Experimentation Demo Builder
 
-You are building an Optimizely Feature Experimentation demo app for a prospect. The user is a Solution Engineer at Optimizely. This skill automates the full end-to-end workflow: creating the Optimizely FX project, retrieving the SDK key, creating attributes/events/audiences, creating feature flags **with variables and variations**, wiring up **targeting rules** (targeted delivery + A/B experiments) that serve those variations, building the demo app, and running it.
+You are building an Optimizely Feature Experimentation demo app for a prospect. The user is a Solution Engineer at Optimizely. This skill automates the full end-to-end workflow: creating the Optimizely FX project, retrieving the SDK key, creating attributes/events/audiences, creating feature flags **with variables and variations**, wiring up **targeting rules** (a per-tier targeted delivery for each tiered audience, plus A/B experiments) that serve those variations, standing up a couple of **running A/B tests on production**, building and running the demo app, and finally **seeding those production experiments with fake results** so their Results pages show a clear winner.
 
 ## Step 0: Load API Token
 
@@ -76,7 +76,8 @@ re-runs are safe. Read each command's JSON output before moving on.
 
 Subcommands: `project`, `attributes`, `flags` (now also creates custom
 **variations**), `events`, `audiences`, `rules` (targeting rules that serve
-specific variations), and `enable-flag`.
+specific variations), `ab-info` (resolves an A/B rule's Results URL +
+winner/loser variation ids for the fake-data runner), and `enable-flag`.
 
 ## Step 1: Create the project (+ SDK keys)
 
@@ -200,9 +201,9 @@ ever do hit a genuine transient, just re-run — existing audiences are skipped.
 ## Step 6: Create targeting rules (serve the variations)
 
 Now wire the variations (Step 3) and audiences (Step 5) together into **targeting
-rules** so the flag serves real variations instead of just on/off. This is the
-step that turns "on/off" into an actual experiment. Two rule types cover almost
-every demo:
+rules** so flags serve real variations instead of just on/off. This is the step
+that turns "on/off" into actual experiments. Two rule types cover almost every
+demo:
 
 - **`targeted_delivery`** — deliver ONE variation to a specific audience (great
   for "Gold members always see the premium hero"). No metric required.
@@ -210,23 +211,34 @@ every demo:
   `a/b` rule REQUIRES at least one metric** (an event key from Step 4).
 
 Rules are evaluated in spec order (first = highest priority), so list targeted
-deliveries before the catch-all A/B split:
+deliveries before any catch-all A/B split. Variation keys must match the ones you
+created in Step 3.
+
+### 6a. Development env — what the running app serves
+
+The app reads the **development** SDK key (Step 1), so put the rules you want to
+demo live here. **For a tiered audience set (e.g. loyalty gold/silver/bronze),
+create one `targeted_delivery` rule per tier** — one rule per audience, never a
+single collapsed rule — each serving that tier's variation. That's what makes
+audience targeting tangible. Follow the tiers with an everyone-else A/B split so
+users outside every tier still land in an experiment:
 
 ```bash
 python3 ~/.optimizely/opti_config.py rules --project <PROJECT_ID> --flag homepage_hero --env-key development --json '[
-  {"key": "gold_gets_treatment", "name": "Gold members see treatment",
-   "type": "targeted_delivery", "audience": "Gold Loyalty Tier", "variation": "treatment"},
-  {"key": "hero_ab", "name": "Hero A/B (everyone else)",
-   "type": "a/b", "distribution": {"control": 5000, "treatment": 5000},
-   "metrics": ["purchase_completed"]}
+  {"key": "gold_tier",   "name": "Gold tier → premium",    "type": "targeted_delivery", "audience": "Gold Loyalty Tier",   "variation": "premium"},
+  {"key": "silver_tier", "name": "Silver tier → plus",     "type": "targeted_delivery", "audience": "Silver Loyalty Tier", "variation": "plus"},
+  {"key": "bronze_tier", "name": "Bronze tier → standard", "type": "targeted_delivery", "audience": "Bronze Loyalty Tier", "variation": "standard"},
+  {"key": "hero_ab",     "name": "Hero A/B (everyone else)", "type": "a/b",
+   "distribution": {"control": 5000, "treatment": 5000}, "metrics": ["purchase_completed"]}
 ]'
 ```
 
-- `audience` is the audience **name** from Step 5 (the runner resolves it to the
-  id). Omit targeting to match everyone.
-- `distribution` maps variation key → basis points and **must sum to 10000**
-  (10000 = 100%). Shorthands: `variation` (single key) or `variations` (list,
-  split evenly).
+- one `targeted_delivery` per tier — do NOT collapse tiers into one rule; each
+  audience gets its own rule so the SE can point at each tier individually.
+- `audience` is the audience **name** from Step 5 (resolved to id). Omit targeting
+  to match everyone. `variation` picks the single served variation.
+- `distribution` maps variation key → basis points and **must sum to 10000**.
+  Shorthands: `variation` (single key) or `variations` (list, split evenly).
 - `metrics` entries are event keys (from Step 4); pass an object
   `{"event": "purchase_completed", "winning_direction": "increasing"}` to override
   aggregator/direction/scope.
@@ -235,9 +247,30 @@ python3 ~/.optimizely/opti_config.py rules --project <PROJECT_ID> --flag homepag
   Pass `--no-enable` to keep the OFF-by-default live-toggle starting point — then
   the SE flips it on in the UI mid-demo and all the pre-built rules light up.
 
-Confirm the datafile compiled the rules (allow a few seconds for the CDN) — you
-should see the A/B rule under `experiments` and the targeted delivery under
-`rollouts`, each with its variations:
+### 6b. Production env — A/B tests to seed with results
+
+**Pick a couple of the more interesting features and stand up a running A/B test
+on the `production` environment.** These are the experiments Step 10 fills with
+fake results, so the Optimizely **Results** page tells a complete story — a clear
+winner, real significance — the moment the prospect opens it. Same command, just
+`--env-key production` (a/b rules default to `status: running`, so they start
+immediately):
+
+```bash
+python3 ~/.optimizely/opti_config.py rules --project <PROJECT_ID> --flag checkout_flow --env-key production --json '[
+  {"key": "checkout_ab", "name": "Checkout A/B", "type": "a/b",
+   "distribution": {"control": 3334, "express": 3333, "minimal": 3333},
+   "metrics": ["purchase_completed"]}
+]'
+```
+
+Give **at least one** production test **three variations** so Step 10 can show a
+winner AND a loser (two-variation tests get just a winner). **Remember the flag
+keys you use here — Step 10 needs them.**
+
+Confirm the dev datafile compiled the rules (allow a few seconds for the CDN) —
+you should see the A/B rule under `experiments` and each targeted delivery under
+`rollouts`, with its variations:
 
 ```bash
 curl -s "https://cdn.optimizely.com/datafiles/<SDK_KEY>.json?cb=$(date +%s)" \
@@ -399,6 +432,41 @@ npm run dev
 
 Take a screenshot of the running app and show it to the user. Confirm all feature flags are working and events are being tracked. Exercise the **variations and targeting rules** from Step 6 — e.g. switch the user's attributes so a targeted-delivery audience matches and confirm the app renders that variation's values. For the Web track, also confirm `/slides` and `/slides/adobe-comparison` appear in the route list and the deck loads (screenshot `http://localhost:3000/slides`).
 
+## Step 10: Seed the production experiments with results (fake data)
+
+Last thing in the build: populate each **production A/B test** from Step 6b with
+results so its Optimizely **Results** page shows a decisive winner out of the box.
+This is the same job `/fake-data` does interactively — but you already know the
+flag and how it should resolve, so drive the runner directly (no prompts). Two
+calls per experiment.
+
+First, resolve the experiment with `ab-info` (it reads the flag's compiled A/B
+rule — no datafile/CDN wait):
+
+```bash
+python3 ~/.optimizely/opti_config.py ab-info --project <PROJECT_ID> --flag checkout_flow --env-key production
+```
+
+Read its JSON. It returns `results_url`, `winner` and `loser` with variation ids,
+already applying the intended outcome: **baseline is `control`, the non-baseline
+variation wins, and the third variation (if the test has one) loses.** `loser` is
+`null` for two-variation tests.
+
+Then send **25,000 visitors** with those ids:
+
+```bash
+python3 ~/.optimizely/fake_data.py send "<results_url>" --visitors 25000 --winner <winner.id> --loser <loser.id>
+```
+
+- Omit `--loser <id>` when `ab-info` reports `loser: null` (two-variation tests).
+- **Repeat both calls for every production A/B test** you created in Step 6b.
+- Do NOT run the interactive `/fake-data` command — `ab-info` already supplies the
+  winner/loser, so calling the runner directly keeps this prompt-free.
+- The runner POSTs in batches to `logx.optimizely.com` (expect `HTTP 204`).
+  Numbers appear on the Results page within ~1–5 minutes; refresh to watch them
+  populate. 25k visitors at the default conversion spread (winner ~15%, baseline
+  ~11%, loser ~8%) is comfortably enough to reach significance.
+
 ## Key Principles for Demo Apps
 
 - **Auto-update is critical**: The datafile must poll every 2 seconds so changes in the Optimizely UI reflect in the app within seconds, with ZERO interaction needed
@@ -418,6 +486,7 @@ After completing all steps, summarize:
 4. All feature flags created, with their variables **and variations**
 5. All events created
 6. Audiences created
-7. Targeting rules created (per flag: type, variations served, audience)
-8. App location and how to run it
-9. (Web track) The Optimizely Slides deck at `/slides`, and what you tailored in `slides.config.ts`
+7. Targeting rules created — development (per-tier targeted deliveries + any A/B) and production (the started A/B tests), noting type, variations served, and audience per rule
+8. Production experiments seeded with fake results (per experiment: Results URL, visitor count, and which variation was made winner/loser)
+9. App location and how to run it
+10. (Web track) The Optimizely Slides deck at `/slides`, and what you tailored in `slides.config.ts`
